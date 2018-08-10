@@ -3,6 +3,43 @@
 
 #include <vector>
 
+// A constraint is introduced by an access and a matcher.
+// In more details, a constraint looks like (A, i0). Meaning that
+// we have assigned dimension i0 to literal A.
+
+namespace matchers {
+  class RelationMatcher;
+}
+
+namespace constraints {
+
+// represents single constraint.
+typedef std::tuple<char, isl::pw_aff> singleConstraint;
+// represents collection of constraints.
+typedef std::vector<singleConstraint> MultipleConstraints;
+
+// TODO: check if we can avoid int dimsInvolved.
+// decouple matcher from constraint list.
+struct ConstraintsList {
+  int dimsInvolved = -1;
+  MultipleConstraints constraints;
+};
+
+ConstraintsList buildMatcherConstraintsWrites(
+                matchers::RelationMatcher &matcher,
+                isl::union_map &accessesWrites);
+
+ConstraintsList buildMatcherConstraintsReads(
+                matchers::RelationMatcher &matcher,
+                isl::union_map &accessesReads);
+
+ConstraintsList compareLists(
+                ConstraintsList &listOne,
+                ConstraintsList &listTwo);
+
+
+} // namespace constraint
+
 /** \defgroup Matchers Matchers
  * \brief Structural matchers on schedule trees.
  *
@@ -41,8 +78,7 @@ enum class RelationKind { read, write, readAndWrite };
 
 class RelationMatcher;
 
-// TODO: change std::string.
-typedef std::vector<std::string> matchingDims;
+typedef std::vector<isl::pw_aff> matchingDims;
 
 // TODO: extend to use variadic template
 class RelationMatcher {
@@ -61,7 +97,15 @@ public:
   // return literal at index i
   char getIndex(unsigned i) const;
   // get number of literals
-  int getIndexesSize() const;
+  unsigned getIndexesSize() const;
+  // set the dims of the matcher once known.
+  void setDims(constraints::MultipleConstraints &mc);
+  // get the type (read, write or readAndWrite)
+  int getType() const;
+  // get the isl::pw_aff for the dim. i
+  std::vector<isl::pw_aff> getDims(int i) const;
+  // get the accessed
+  std::vector<isl::map> getAccesses(isl::union_map &accesses);
   ~RelationMatcher() = default;
 
 private:
@@ -260,67 +304,3 @@ hasDescendant(const ScheduleNodeMatcher &descendantMatcher);
 
 #include "matchers-inl.h"
 
-// A constraint is introduced by an access and a matcher.
-// In more details, a constraint looks like (A, i0). Meaning that
-// we have assigned dimension i0 to literal A.
-/*
-namespace constraint {
-
-// represents single constraint.
-typedef std::tuple<char, isl::pw_aff> singleConstraint;
-// represents collection of constraints.
-typedef std::vector<singleConstraint> MultipleConstraints;
-
-// TODO: check if we can avoid int dimsInvolved.
-// decouple matcher from constraint list.
-struct MatcherConstraints {
-  int dimsInvolved = -1;
-  MultipleConstraints constraints;
-};
-
-// helper function for printing single constraint.
-inline void print_single_constraint(raw_ostream &OS,
-                                    const singleConstraint &c) {
-  OS << std::get<0>(c) << "," << std::get<1>(c).to_str();
-}
-
-// overloading << for printing single constraint.
-inline auto& operator<<(raw_ostream &OS, const singleConstraint &c) {
-  OS << "(";
-  print_single_constraint(OS, c);
-  return OS << ")";
-}
-
-// helper function for multiple constraints.
-inline void print_multiple_constraints(raw_ostream &OS,
-                                       const MultipleConstraints &mc) {
-  for(std::size_t i = 0; i < mc.size()-1; ++i) {
-    OS << mc[i] << ",";
-  }
-  OS << mc[mc.size()-1];
-}
-
-// overloading << for multiple constraints.
-inline auto& operator<<(raw_ostream &OS, const MultipleConstraints &mc) {
-  OS << "[";
-  print_multiple_constraints(OS, mc);
-  return OS << "]";
-}
-
-// overloading << for MatcherConstraints
-inline auto& operator<<(raw_ostream &OS, const MatcherConstraints &mc) {
-  OS << "{";
-  OS << "\n";
-  OS << "Involved Dims = " << mc.dimsInvolved << "\n";
-  if(mc.dimsInvolved == -1) {
-    OS << "Constraints = empty";
-    OS << "\n";
-    return OS << "}";
-  }
-  OS << "Constraints = " << mc.constraints;
-  OS << "\n";
-  return OS << "}";
-}
-
-} // namespace constraint
-*/
