@@ -115,7 +115,7 @@ std::vector<isl::map> RelationMatcher::getAccesses(isl::union_map &accesses) {
     isl::pw_multi_aff MultiAff = isl::pw_multi_aff::from_map(access);
     bool equalDims = true;
 
-    for(int i=0; i<setDim_.size(); ++i) {
+    for(size_t i=0; i<setDim_.size(); ++i) {
       isl::pw_aff PwAff = MultiAff.get_pw_aff(i);
       bool check = checkDimension(PwAff, setDim_[i]);
       equalDims = equalDims && check;
@@ -130,60 +130,6 @@ std::vector<isl::map> RelationMatcher::getAccesses(isl::union_map &accesses) {
   });
   return res;
 }
-
-/*
-// print the structure of the tree matcher.
-void ScheduleNodeMatcher::printMatcher(raw_ostream &OS,
-                                       const ScheduleNodeMatcher &matcher,
-                                       int indent) const {
-
-  switch (matcher.current_) {
-  case ScheduleNodeKind::sequence:
-    OS.indent(indent) << "Sequence Node\n";
-    break;
-  case ScheduleNodeKind::set:
-    OS.indent(indent) << "Set Node\n";
-    break;
-  case ScheduleNodeKind::band:
-    OS.indent(indent) << "Band Node\n";
-    break;
-  case ScheduleNodeKind::context:
-    OS.indent(indent) << "Context Node\n";
-    break;
-  case ScheduleNodeKind::domain:
-    OS.indent(indent) << "Domain Node\n";
-    break;
-  case ScheduleNodeKind::extension:
-    OS.indent(indent) << "Extension Node\n";
-    break;
-  case ScheduleNodeKind::filter:
-    OS.indent(indent) << "Filter Node\n";
-    break;
-  case ScheduleNodeKind::guard:
-    OS.indent(indent) << "Guard Node\n";
-    break;
-  case ScheduleNodeKind::mark:
-    OS.indent(indent) << "Mark Node\n";
-    break;
-  case ScheduleNodeKind::leaf:
-    OS.indent(indent) << "Leaf Node\n";
-    break;
-  default:
-    OS.indent(indent) << "ND\n";
-  }
-
-  if (matcher.children_.empty()) {
-    return;
-  }
-
-  int n_children_ = matcher.children_.size();
-  for (int i = 0; i < n_children_; ++i) {
-    printMatcher(OS, matcher.children_[i], indent + 2);
-  }
-
-  OS << "\n";
-}
-*/
 
 bool ScheduleNodeMatcher::isMatching(const ScheduleNodeMatcher &matcher,
                                      isl::schedule_node node) {
@@ -304,7 +250,6 @@ bool isEqual(singleConstraint &a, singleConstraint &b) {
 
 // remove possible dumpicates
 void removeDuplicate(MultipleConstraints &constraints) {
-  std::cout << "removeduplicate" << std::endl;
   for(unsigned i=0; i<constraints.size(); ++i) {
     for(unsigned j=i+1; j<constraints.size(); ++j) {
       if(isEqual(constraints[i],constraints[j])) {
@@ -336,7 +281,6 @@ void createNewConstraintsList(
   }
 
   // remove possible duplicates.
-  std::cout << "calling remove" << std::endl;
   removeDuplicate(newConstraints);
 
   res.constraints = newConstraints;
@@ -361,36 +305,17 @@ ConstraintsList compareLists(
     bool isPossible = true;
       for(int ii=i; ii<i+listOne.dimsInvolved; ++ii) {
         for(int jj=j; jj<j+listTwo.dimsInvolved; ++jj) {
-          std::cout << "mOne label : " << std::get<0>(listOne.constraints[ii]) << std::endl;
-          std::cout << "mOne Pw : " << std::get<1>(listOne.constraints[ii]).to_str() << std::endl;
-          std::cout << "mTwo label : " << std::get<0>(listTwo.constraints[jj]) << std::endl;
-          std::cout << "mTwo Pw : " << std::get<1>(listTwo.constraints[jj]).to_str() << std::endl;
-          std::cout << "#####" << std::endl;
           if((std::get<0>(listOne.constraints[ii]) != std::get<0>(listTwo.constraints[jj]) &&
              (std::get<1>(listOne.constraints[ii]).is_equal(std::get<1>(listTwo.constraints[jj])) == 1)) ||
              (std::get<0>(listOne.constraints[ii]) == std::get<0>(listTwo.constraints[jj]) &&
  	     (std::get<1>(listOne.constraints[ii]).is_equal(std::get<1>(listTwo.constraints[jj])) == 0))) {
             isPossible = false;
- 	    std::cout << "test not passed" << std::endl;
           }
           else {
-            bool cond = std::get<0>(listOne.constraints[ii]) == std::get<0>(listTwo.constraints[jj]);
-	    bool condOne = std::get<1>(listOne.constraints[ii]).is_equal(std::get<1>(listTwo.constraints[jj]));
-	    std::string StringOne = std::get<1>(listOne.constraints[ii]).to_str();
-            std::string StringTwo = std::get<1>(listTwo.constraints[jj]).to_str();
-	    std::cout << "StringOne" << StringOne << std::endl;
-	    std::cout << "StringTwo" << StringTwo << std::endl;
-            std::cout << "compare =" << StringOne.compare(StringTwo) << std::endl;
-            std::cout << "cond" << cond << std::endl;
-	    std::cout << "condOne" << condOne << std::endl;
- 	    //std::cout << "condTwo" << condTwo << std::endl;
-	    std::cout << "test passed" << std::endl;
           }
         }
       }
       if(isPossible) {
-        std::cout << "isPossible" << std::endl;
-	std::cout << "@@@@@@@@@@@" << std::endl;
         createNewConstraintsList(i,j,listOne,listTwo,res);
       }
     }

@@ -23,6 +23,9 @@ public:
   isl::union_map reads;
   isl::union_map mayWrites;
   isl::union_map mustWrites;
+  isl::union_map taggedReads;
+  isl::union_map taggedMayWrites;
+  isl::union_map taggedMustWrites;
   /// \}
 
   inline void dump();

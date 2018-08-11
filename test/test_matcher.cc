@@ -173,7 +173,7 @@ inline auto& operator<<(std::ostream &OS, const matchers::RelationMatcher &m) {
   }
   for(int i=0; i<n_labels; ++i){
     auto payload = m.getDims(i);
-    for(int j=0; j<payload.size(); ++j) {
+    for(size_t j=0; j<payload.size(); ++j) {
       OS << payload[j].to_str() << "\n";
     }
   }
@@ -187,9 +187,22 @@ inline auto& operator<<(std::ostream &OS, const std::vector<isl::map> &v) {
   }
   return OS << "\n";
 }
-//end debug
+//end debug helpers
 
 TEST(TreeMatcher, matmul) {
+
+/*
+  // inputs/matmul.c
+  #pragma scop
+  for(int i=0; i<N; ++i)
+    for(int j=0; j<N; ++j) {
+      C[i][j] = 0;
+      for(int k=0; k<N; ++k)
+        C[i][j] += B[k][j] * A[i][k];
+    }
+  #pragma endscop
+*/
+
   using namespace matchers;
   using namespace constraints;
   std::cout << "matmul test" << std::endl;
@@ -199,21 +212,35 @@ TEST(TreeMatcher, matmul) {
   //S.dump();
   
   auto listA = buildMatcherConstraintsReads(A,S.reads);
-  std::cout << "listA" << listA << std::endl;
+  //std::cout << "listA" << listA << std::endl;
   auto listB = buildMatcherConstraintsReads(B,S.reads);
-  std::cout << "listB" << listB << std::endl;
+  //std::cout << "listB" << listB << std::endl;
   auto listRes = compareLists(listA, listB);
-  std::cout << "listRes" << listRes << std::endl;
+  //std::cout << "listRes" << listRes << std::endl;
 
   A.setDims(listRes.constraints);
   B.setDims(listRes.constraints);
-  std::cout << A << std::endl;
-  std::cout << B << std::endl;
+  //std::cout << A << std::endl;
+  //std::cout << B << std::endl;
   
   auto resA = A.getAccesses(S.reads);
-  std::cout << resA << std::endl;
+  //std::cout << resA << std::endl;
   auto resB = B.getAccesses(S.reads);
-  std::cout << resB << std::endl;
+  //std::cout << resB << std::endl;
+  EXPECT_TRUE((resA.size() == 1)&&(resB.size()==1));
+
+  auto C = read('X','Y');
+  auto D = read('X','Z');
+  auto listC = buildMatcherConstraintsReads(C,S.reads);
+  auto listD = buildMatcherConstraintsReads(D,S.reads);
+  auto listRess = compareLists(listC, listD);
+  C.setDims(listRess.constraints);
+  D.setDims(listRess.constraints);
+  auto resC = C.getAccesses(S.reads);
+  auto resD = D.getAccesses(S.reads);
+  std::cout << resC << std::endl;
+  std::cout << resD << std::endl;
+  EXPECT_TRUE((resD.size() == 1)&&(resC.size()==1));
 }
 
 TEST(TreeMatcher, transpose) {
