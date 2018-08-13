@@ -1,43 +1,8 @@
 #include "islutils/matchers.h"
-
 #include <iostream>
 using namespace std;
 
 namespace matchers {
-
-/*
-void RelationMatcher::printMatcher(raw_ostream &OS,
-  				   int indent) const {
-  switch (type_) {
-    case RelationKind::read:
-      OS.indent(indent) << "Read access\n";
-      break;
-    case RelationKind::write:
-      OS.indent(indent) << "Write access\n";
-      break;
-    case RelationKind::readOrWrite:
-      OS.indent(indent) << "ReadOrWrite\n";
-      break;
-    default:
-      OS.indent(indent) << "ND\n";
-    }
-
-  int n_children_ = indexes_.size();
-  for(int i=0; i < n_children_; ++i) {
-    OS.indent(indent) << indexes_[i] << "\n";
-  }
-
-  int n_dims_ = setDim_.size();
-  OS.indent(indent) << "Number of dims: =" << n_dims_ << "\n";
-
-  for(size_t i=0; i<n_dims_; ++i) {
-    auto payload = setDim_[i];
-    for(size_t j=0; j<payload.size(); ++j) {
-      OS.indent(indent +2) << payload[j] << "\n";
-    }
-  }
-}
-*/
 
 void RelationMatcher::setDims(constraints::MultipleConstraints &mc) {
   std::vector<isl::pw_aff> tmp;
@@ -47,11 +12,21 @@ void RelationMatcher::setDims(constraints::MultipleConstraints &mc) {
         tmp.push_back(std::get<1>(mc[j]));
       }
     }
+    //std::cout << tmp << std::endl;
     setDim_.push_back(tmp);
     tmp.erase(tmp.begin(), tmp.end());
   }
 }
 
+// is (are) the dimension(s) set?
+bool RelationMatcher::isSet() const {
+  return isSetDim_;
+}
+
+// set flag for dims.
+void RelationMatcher::set() {
+  isSetDim_ = true;
+}
 
 // returns the number of literals assigned to the matcher.
 unsigned RelationMatcher::getIndexesSize() const {
@@ -98,6 +73,8 @@ std::vector<isl::pw_aff> RelationMatcher::getDims(int i) const {
 static bool checkDimension(isl::pw_aff &pw, std::vector<isl::pw_aff> &dims) {
   bool result = false;
   for(size_t i = 0; i<dims.size(); ++i) {
+    std::cout << "matcher: " << dims[i] << std::endl;
+    std::cout << "pw :" << pw << std::endl;
     if(dims[i].is_equal(pw))
       result = true;
   }
@@ -106,23 +83,32 @@ static bool checkDimension(isl::pw_aff &pw, std::vector<isl::pw_aff> &dims) {
 // return the accesses matched
 std::vector<isl::map> RelationMatcher::getAccesses(isl::union_map &accesses) {
   std::vector<isl::map> res;
+  std::cout << accesses << std::endl;
   accesses.foreach_map([&](isl::map access) -> isl_stat {
     isl::space Space = access.get_space();
     
-    if(Space.dim(isl::dim::out) != indexes_.size())
+    if(Space.dim(isl::dim::out) != indexes_.size()) {
+      std::cout << "returning" << std::endl;
       return isl_stat_ok;
+    }
 
     isl::pw_multi_aff MultiAff = isl::pw_multi_aff::from_map(access);
     bool equalDims = true;
 
     for(size_t i=0; i<setDim_.size(); ++i) {
+      //std::cout << "Size" << setDim_.size() << std::endl;
       isl::pw_aff PwAff = MultiAff.get_pw_aff(i);
+      //std::cout << "setDim" << setDim_[i] << std::endl;
       bool check = checkDimension(PwAff, setDim_[i]);
       equalDims = equalDims && check;
     }
 
+    //std::cout << equalDims << std::endl;
     if(equalDims) {
       res.push_back(access);
+      // drop the access that matched.
+      //isl::map alreadyMatched = accesses.extract_map(access.get_space());
+      //accesses = accesses.subtract(isl::union_map(access));
     }
     
     return isl_stat_ok;
@@ -235,6 +221,188 @@ hasDescendant(const ScheduleNodeMatcher &descendantMatcher) {
   };
 }
 
+// Finder methods.
+// The "Finder" class takes as input the Scop and a collection
+// of matchers. It return the accesses that match
+// for any partial schedule detected into the Scop.
+
+
+static bool isEqual(RelationMatcher &a, RelationMatcher &b) {
+  
+  if(a.getIndexesSize() != b.getIndexesSize())
+    return false;
+   
+  bool res = true;
+  for(size_t i=0; i<a.getIndexesSize(); ++i) {
+    if(a.getIndex(i) != b.getIndex(i)) {
+      res = false;
+    }
+  }
+  return res;
+}
+
+// remove dumplicates from the matchers array.
+// This is done since duplicates do not add any additional
+// informations.
+// For example: read(A,B) , read(A,B) and read(C,B).
+// will become read(A,B) and read(C,B).
+// Notice that we will take into account later on
+// for the two read(A,B) accesses. It does not make
+// sense to construct constrainst lists for duplicate.
+std::vector<RelationMatcher> removeDuplicates(
+					std::vector<RelationMatcher> &v) {
+  std::vector<RelationMatcher> res = v;
+  for(size_t i=0; i<res.size(); ++i) {
+    for(size_t j=i+1; j<res.size()-1; ++j) {
+      if(isEqual(res[i], res[j])) {
+        res.erase(res.begin()+j);
+      }
+    }
+  }
+  return res;
+} 
+
+// check if an element in the first list is not present
+// in the second list. If this is the case we modify the 
+// second list adding this element.
+void Finder::merge(std::vector<RelationMatcher> &first,
+		      std::vector<RelationMatcher> &second) {
+
+  for(size_t i=0; i<second.size(); ++i) {
+    bool isPresent = false;
+    for(size_t j=0; j<first.size(); ++j) {
+      if(isEqual(second[i], first[j]))
+        isPresent = true;
+    }
+    if(!isPresent)
+      first.push_back(second[i]);
+  } 
+}  	
+
+// find
+void Finder::findAndPrint() {
+
+  int size = readMatchers.size();
+  if(size > reads.n_map()) 
+    return;
+ 
+  size = writeMatchers.size();  
+  if(size > writes.n_map())
+    return;
+  
+  size = readAndWriteMatchers.size(); 
+  if(size > reads.n_map() ||
+     size > writes.n_map())
+    return;
+
+  std::vector<RelationMatcher> newReadMatchers = 
+  			       removeDuplicates(readMatchers);
+  std::vector<RelationMatcher> newWriteMatchers = 
+                               removeDuplicates(writeMatchers);
+  std::vector<RelationMatcher> newReadAndWriteMatchers = 
+                               removeDuplicates(readAndWriteMatchers);
+
+  //std::cout << newReadMatchers << std::endl;
+  //std::cout << newWriteMatchers << std::endl;
+  //std::cout << newReadAndWriteMatchers << std::endl;
+  merge(newReadMatchers, newWriteMatchers);
+  merge(newReadMatchers, newReadAndWriteMatchers);
+  //std::cout << newReadMatchers << std::endl;
+  //std::cout << "writes : " << writes << std::endl;
+
+  // step 1. Generate constraints for each matcher.
+  std::vector<constraints::ConstraintsList> c_lists;
+  for(size_t i=0; i<newReadMatchers.size(); ++i) {
+    c_lists.push_back(constraints::buildMatcherConstraints(newReadMatchers[i], 
+							  reads));
+  }
+  std::cout << c_lists << std::endl;
+
+  // step 2. find a list that satisfy all the matcher if any.  
+  constraints::ConstraintsList c_list; 
+  for(size_t i=0; i<c_lists.size(); ++i) {
+    if(i <= 1) {
+      c_list = constraints::compareLists(c_lists[0], c_lists[1]);
+    }
+    else {
+      c_list = constraints::compareLists(c_list, c_lists[i]);
+    }
+  }
+
+  // step 3. set the dims for each matcher.
+  // TODO: do the same for write and readAndWrite
+/*
+  for(size_t i=0; i<readMatchers.size(); ++i) {
+    readMatchers[i].setDims(c_list.constraints);
+    readMatchers[i].set();
+  }
+*/
+  for(size_t i=0; i<writeMatchers.size(); ++i) {
+    writeMatchers[i].setDims(c_list.constraints);
+    writeMatchers[i].set();
+  }
+/*
+  for(size_t i=0; i<readAndWriteMatchers.size(); ++i) {
+    readAndWriteMatchers[i].setDims(c_list.constraints);
+    readAndWriteMatchers[i].set();
+  }
+*/
+
+  // step 4. print the accesses matched.
+  // TODO: do the same for write and readAndWrite
+  for(size_t i=0; i<readMatchers.size(); ++i) {
+    //std::cout << "printing read: ";
+    //std::cout << readMatchers[i].getAccesses(reads) << std::endl;
+  }
+  for(size_t i=0; i<writeMatchers.size(); ++i) {
+    std::cout << "printing write: ";
+    std::cout << writeMatchers[i].getAccesses(writes) << std::endl;
+  }
+  for(size_t i=0; i<readAndWriteMatchers.size(); ++i) {
+    std::cout << "printing read&Write: ";
+  }
+
+  return;
+}
+
+
+Finder::Finder(isl::union_map reads,
+	       isl::union_map writes,
+               std::vector<RelationMatcher> &matchers) {
+  this->reads = reads;
+  this->writes = writes;
+  assert(reads.n_map() != 0 && "empty  reads");
+  assert(writes.n_map() != 0 && "empty writes");
+  assert(matchers.size() !=0 && "empty matchers");
+  for(size_t i=0; i<matchers.size(); ++i) {
+    int type = matchers[i].getType();
+    // read type.
+    if(type == 0) {
+      readMatchers.push_back(matchers[i]);
+    }
+    // write type
+    if(type == 1) {
+      writeMatchers.push_back(matchers[i]);
+    }
+    // readAndWrite type
+    else if(type == 2) {
+      readAndWriteMatchers.push_back(matchers[i]);
+    }
+  } 
+}
+
+int Finder::getSizeReadMatchers() {
+  return readMatchers.size();
+}
+
+int Finder::getSizeWriteMatchers() {
+  return writeMatchers.size();
+}
+
+int Finder::getSizeReadAndWriteMatchers() {
+  return readAndWriteMatchers.size();
+}
+
 } // namespace matchers
 
 
@@ -323,6 +491,47 @@ ConstraintsList compareLists(
   return res;
 }
 
+// create the constraints list.
+ConstraintsList buildMatcherConstraints(
+                        matchers::RelationMatcher &matcher,
+                        isl::union_map &accesses) {
+  ConstraintsList list;
+  accesses.foreach_map([&list, matcher](isl::map access) -> isl_stat {
+    isl::space Space = access.get_space();
+    if(Space.dim(isl::dim::out) == matcher.getIndexesSize()) {
+      isl::pw_multi_aff MultiAff = isl::pw_multi_aff::from_map(access);
+      for(unsigned u=0; u<access.dim(isl::dim::out); ++u) {
+        isl::pw_aff PwAff = MultiAff.get_pw_aff(u);
+        //std::cout << "PwAff" << PwAff << std::endl;
+        //std::cout << "Space PwAff" << PwAff.get_space() << std::endl;
+        //std::cout << "Domain Space" << PwAff.get_domain_space() << std::endl;
+        //std::cout << "project OUT" << PwAff.project_domain_on_params() << std::endl;
+        //std::cout << "domain Set:" << PwAff.domain().to_str() << std::endl;
+        //std::cout << "param set: " << PwAff.params().to_str() << std::endl;
+        // new part
+        PwAff.foreach_piece([&](isl::set S, isl::aff Aff) -> isl_stat {
+          for(unsigned uu=0; uu<access.dim(isl::dim::in); ++uu) {
+   	    isl::val V = Aff.get_coefficient_val(isl::dim::in, uu);
+            std::cout << V.to_str() << std::endl;
+            if (!V.is_zero()) {
+              std::cout << "LoopDim" << uu << std::endl;
+            }
+          }
+          return isl_stat_ok;
+        });
+        // end new part. 
+        auto t = std::make_tuple(matcher.getIndex(u), PwAff);
+        list.constraints.push_back(t);
+      }
+    }
+    return isl_stat_ok;
+  });
+  list.dimsInvolved = matcher.getIndexesSize();
+  return list;
+}
+
+
+/*
 // create the constraints list for reads.
 ConstraintsList buildMatcherConstraintsReads(
 			matchers::RelationMatcher &matcher,
@@ -343,7 +552,8 @@ ConstraintsList buildMatcherConstraintsReads(
   list.dimsInvolved = matcher.getIndexesSize();
   return list;
 }
-
+*/
+/*
 // create the constraints for writes.
 ConstraintsList buildMatcherConstraintsWrites(
 			matchers::RelationMatcher &matcher,
@@ -364,6 +574,7 @@ ConstraintsList buildMatcherConstraintsWrites(
   list.dimsInvolved = matcher.getIndexesSize();
   return list;
 }
+*/
  
 } // namespace constraints
 

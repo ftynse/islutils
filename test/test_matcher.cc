@@ -45,6 +45,7 @@ TEST(TreeMatcher, CompileTest) {
   auto m13 = read('X', 'Y');
   auto m14 = write('Z');
   auto m15 = write('S', 'Y');
+  auto m16 = readAndWrite('X','Y');
 }
 
 static isl::schedule_node makeGemmTree() {
@@ -105,90 +106,80 @@ TEST(TreeMatcher, LeafMatchesLeaf) {
   EXPECT_TRUE(ScheduleNodeMatcher::isMatching(matcher, node.child(0)));
 }
 
-//debug helpers.
-
-// helper function for printing single constraint.
-inline void print_single_constraint(std::ostream &OS,
-                                    const constraints::singleConstraint &c) {
-  OS << std::get<0>(c) << "," << std::get<1>(c).to_str();
+TEST(TreeMatcher, finderConstructor) {
+  using namespace matchers;
+  Scop S = Parser("inputs/matmul.c").getScop();
+  EXPECT_TRUE(!S.schedule.is_null());
+  //S.dump();
+  isl::union_map reads = S.reads;
+  //std::cout << reads << std::endl;
+  isl::union_map writes = S.mustWrites;
+  //std::cout << writes << std::endl;
+  auto M1 = read('X', 'Y');
+  std::vector<RelationMatcher> matchers;
+  matchers.push_back(M1);
+  auto f = Finder(reads, writes, matchers);
+  EXPECT_TRUE(f.getSizeReadMatchers() == 1);
+  auto M2 = read('X','Y');
+  auto M3 = read('X','Y');
+  matchers.push_back(M2);
+  matchers.push_back(M3);
+  auto f1 = Finder(reads, writes, matchers);
+  EXPECT_TRUE(f1.getSizeReadMatchers() == 3);
+  auto M4 = write('X','Y');
+  matchers.push_back(M4);
+  auto f2 = Finder(reads, writes, matchers);
+  EXPECT_TRUE(f2.getSizeReadMatchers() == 3 && f2.getSizeWriteMatchers() == 1);
+  auto M5 = readAndWrite('X','Y');
+  matchers.push_back(M5);
+  auto f3 = Finder(reads, writes, matchers);
+  EXPECT_TRUE(f3.getSizeReadAndWriteMatchers() == 1);
 }
 
-// overloading << for printing single constraint.
-inline auto& operator<<(std::ostream &OS, const constraints::singleConstraint &c) {
-  OS << "(";
-  print_single_constraint(OS, c);
-  return OS << ")";
+TEST(TreeMatcher, finderTest) {
+  using namespace matchers;
+  Scop S = Parser("inputs/matmul.c").getScop();
+  EXPECT_TRUE(!S.schedule.is_null());
+  isl::union_map reads = S.reads;
+  isl::union_map writes = S.mustWrites;
+  EXPECT_TRUE(reads.n_map() != 0);
+  EXPECT_TRUE(writes.n_map() != 0);
+  auto m1 = read('A','B');
+  auto m2 = read('A','B');
+  //auto m3 = read('B','C');
+  auto m4 = write('D','B');
+  auto m5 = write('D','B');
+  std::vector<RelationMatcher> v;
+  v.push_back(m1);
+  v.push_back(m2);
+  //v.push_back(m3);
+  v.push_back(m4);
+  v.push_back(m5);
+  Finder f = Finder(reads, writes, v);
+  f.findAndPrint();
+}
+/*
+static __isl_give isl_schedule_node *
+	patternMatching(__isl_take isl_schedule_node *node, void *User) {
+  isl::schedule_node target = isl::manage_copy(node);
+  std::cout << "TargetNode " << target.to_str() << std::endl;
+  return node;
+} 
+
+static void walkTree(isl::schedule_node node) {
+  node = isl::manage(isl_schedule_node_map_descendant_bottom_up(
+    node.release(),patternMatching,NULL));
 }
 
-// helper function for multiple constraints.
-inline void print_multiple_constraints(std::ostream &OS,
-				       const constraints::MultipleConstraints &mc) {
-  for(std::size_t i = 0; i < mc.size()-1; ++i) {
-    OS << mc[i] << ",";
-  }
-  OS << mc[mc.size()-1];
+TEST(TreeMatcher, matmulFlow) {
+  using namespace matchers;
+  Scop S = Parser("inputs/matmul.c").getScop();
+  auto root = S.schedule.get_root();
+  walkTree(root);
+	
 }
-
-// overloading << for multiple constraints.
-inline auto& operator<<(std::ostream &OS, const constraints::MultipleConstraints &mc) {
-  OS << "[";
-  print_multiple_constraints(OS, mc);
-  return OS << "]";
-}
-
-// overloading << for ConstraintsList
-inline auto& operator<<(std::ostream &OS, const constraints::ConstraintsList &mc) {
-  OS << "{";
-  OS << "\n";
-  OS << "Involved Dims = " << mc.dimsInvolved << "\n";
-  if(mc.dimsInvolved == -1) {
-    OS << "Constraints = empty";
-    OS << "\n";
-    return OS << "}";
-  }
-  OS << "Constraints = " << mc.constraints;
-  OS << "\n";
-  return OS << "}";
-}
-
-// overloading of << to print the entire structure of
-// a matchers.
-inline auto& operator<<(std::ostream &OS, const matchers::RelationMatcher &m) {
-  OS << "@@@@@@\n";
-  switch(m.getType()) {
-  case 0:
-    OS << "Read matcher\n";
-    break;
-  case 1:
-    OS << "Write matcher\n";
-    break;
-  case 2:
-    OS << "Read & Write matcher\n";
-  default:
-    OS << "NA\n";
-  }
-  int n_labels = m.getIndexesSize();
-  for(int i=0; i<n_labels; ++i) {
-    OS << m.getIndex(i) << "\n";
-  }
-  for(int i=0; i<n_labels; ++i){
-    auto payload = m.getDims(i);
-    for(size_t j=0; j<payload.size(); ++j) {
-      OS << payload[j].to_str() << "\n";
-    }
-  }
-  return OS << "@@@@@@\n";
-}
-
-// overloading of << to print std::vector<isl::map>
-inline auto& operator<<(std::ostream &OS, const std::vector<isl::map> &v) {
-  for(size_t i=0; i<v.size(); ++i) {
-    OS << v[i].to_str() << "\n";
-  }
-  return OS << "\n";
-}
-//end debug helpers
-
+*/
+   
 TEST(TreeMatcher, matmul) {
 
 /*
@@ -203,58 +194,51 @@ TEST(TreeMatcher, matmul) {
   #pragma endscop
 */
 
-  using namespace matchers;
-  using namespace constraints;
-  std::cout << "matmul test" << std::endl;
-  Scop S = Parser("inputs/matmul.c").getScop();
-  auto A = read('X','Y');
-  auto B = read('Y', 'Z');
+  //using namespace matchers;
+  //using namespace constraints;
+  //std::cout << "matmul test" << std::endl;
+  //Scop S = Parser("inputs/matmul.c").getScop();
+  //auto A = read('X','Y');
+  //auto B = read('Y', 'Z');
   //S.dump();
   
-  auto listA = buildMatcherConstraintsReads(A,S.reads);
+  //auto listA = buildMatcherConstraintsReads(A,S.reads);
   //std::cout << "listA" << listA << std::endl;
-  auto listB = buildMatcherConstraintsReads(B,S.reads);
+  //auto listB = buildMatcherConstraintsReads(B,S.reads);
   //std::cout << "listB" << listB << std::endl;
-  auto listRes = compareLists(listA, listB);
+  //auto listRes = compareLists(listA, listB);
   //std::cout << "listRes" << listRes << std::endl;
 
-  A.setDims(listRes.constraints);
-  B.setDims(listRes.constraints);
+  //A.setDims(listRes.constraints);
+  //B.setDims(listRes.constraints);
   //std::cout << A << std::endl;
   //std::cout << B << std::endl;
   
-  auto resA = A.getAccesses(S.reads);
+  //auto resA = A.getAccesses(S.reads);
   //std::cout << resA << std::endl;
-  auto resB = B.getAccesses(S.reads);
+  //auto resB = B.getAccesses(S.reads);
   //std::cout << resB << std::endl;
-  EXPECT_TRUE((resA.size() == 1)&&(resB.size()==1));
+  //EXPECT_TRUE((resA.size() == 1)&&(resB.size()==1));
 
-  auto C = read('X','Y');
-  auto D = read('X','Z');
-  auto listC = buildMatcherConstraintsReads(C,S.reads);
-  auto listD = buildMatcherConstraintsReads(D,S.reads);
-  auto listRess = compareLists(listC, listD);
-  C.setDims(listRess.constraints);
-  D.setDims(listRess.constraints);
-  auto resC = C.getAccesses(S.reads);
-  auto resD = D.getAccesses(S.reads);
-  std::cout << resC << std::endl;
-  std::cout << resD << std::endl;
-  EXPECT_TRUE((resD.size() == 1)&&(resC.size()==1));
+  //auto C = read('X','Y');
+  //auto D = read('X','Z');
+  //auto listC = buildMatcherConstraintsReads(C,S.reads);
+  //auto listD = buildMatcherConstraintsReads(D,S.reads);
+  //auto listRess = compareLists(listC, listD);
+  //C.setDims(listRess.constraints);
+  //D.setDims(listRess.constraints);
+  //auto resC = C.getAccesses(S.reads);
+  //auto resD = D.getAccesses(S.reads);
+  //std::cout << resC << std::endl;
+  //std::cout << resD << std::endl;
+  //EXPECT_TRUE((resD.size() == 1)&&(resC.size()==1));
 }
 
 TEST(TreeMatcher, transpose) {
   using namespace matchers;
   using namespace constraints;
-  //std::cout << "transpose test" << std::endl;
-  //Scop S = Parser("inputs/transpose.c").getScop();
-  
   auto A = read('X','Y');
   auto B = read('Y','X');
-
-  //auto listA = buildMatcherConstraintsReads(A,S.reads);
-  //auto listB = buildMatcherConstraintsReads(B,S.reads);
-  //auto lisRes = compareLists(listA, listB);
 }
    
 int main(int argc, char **argv) {

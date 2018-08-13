@@ -1,9 +1,9 @@
 project(islutils)
 include(ExternalProject)
 cmake_minimum_required(VERSION 3.2)
-set(CMAKE_CXX_FLAGS "-Wall -pedantic -O3")
+set(CMAKE_CXX_FLAGS "-Wall -std=gnu++14 -pedantic -O3")
 set(CMAKE_CXX_FLAGS_DEBUG "-Wall -pedantic -O0 -g")
-set(CMAKE_CXX_STANDARD 11)
+#set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 ExternalProject_Add(isl

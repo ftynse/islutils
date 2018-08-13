@@ -1,6 +1,6 @@
 #include <isl/cpp.h>
 #include <isl/schedule_node.h>
-
+#include "islutils/scop.h"
 #include <vector>
 
 // A constraint is introduced by an access and a matcher.
@@ -18,13 +18,13 @@ typedef std::tuple<char, isl::pw_aff> singleConstraint;
 // represents collection of constraints.
 typedef std::vector<singleConstraint> MultipleConstraints;
 
-// TODO: check if we can avoid int dimsInvolved.
 // decouple matcher from constraint list.
 struct ConstraintsList {
   int dimsInvolved = -1;
   MultipleConstraints constraints;
 };
 
+/*
 ConstraintsList buildMatcherConstraintsWrites(
                 matchers::RelationMatcher &matcher,
                 isl::union_map &accessesWrites);
@@ -32,6 +32,10 @@ ConstraintsList buildMatcherConstraintsWrites(
 ConstraintsList buildMatcherConstraintsReads(
                 matchers::RelationMatcher &matcher,
                 isl::union_map &accessesReads);
+*/
+ConstraintsList buildMatcherConstraints(
+		matchers::RelationMatcher &matcher,
+		isl::union_map &accesses);
 
 ConstraintsList compareLists(
                 ConstraintsList &listOne,
@@ -87,6 +91,7 @@ class RelationMatcher {
   friend RelationMatcher name(char a);
   DECL_FRIEND_TYPE_MATCH(read)
   DECL_FRIEND_TYPE_MATCH(write)
+  DECL_FRIEND_TYPE_MATCH(readAndWrite)
 #undef DECL_FRIEND_TYPE_MATCH
 
 public:
@@ -106,6 +111,10 @@ public:
   std::vector<isl::pw_aff> getDims(int i) const;
   // get the accessed
   std::vector<isl::map> getAccesses(isl::union_map &accesses);
+  // are the dimension set?
+  bool isSet() const;
+  // set flag for dimension(s)
+  void set();
   ~RelationMatcher() = default;
 
 private:
@@ -117,6 +126,7 @@ private:
   // satisfy all the matcher we "fixed" the
   // dimensions.
   std::vector<matchingDims> setDim_;
+  bool isSetDim_;
 };
 
 class ScheduleNodeMatcher;
@@ -300,7 +310,171 @@ hasSibling(const ScheduleNodeMatcher &siblingMatcher);
 std::function<bool(isl::schedule_node)>
 hasDescendant(const ScheduleNodeMatcher &descendantMatcher);
 
+class Finder {
+  private:
+    isl::union_map reads, writes;
+    std::vector<RelationMatcher> readMatchers;
+    std::vector<RelationMatcher> writeMatchers;
+    std::vector<RelationMatcher> readAndWriteMatchers;
+    void merge(std::vector<RelationMatcher> &first, 
+	       std::vector<RelationMatcher> &second);
+  public:
+  Finder(isl::union_map reads,
+	 isl::union_map writes, 
+         std::vector<RelationMatcher> &matchers);
+  int getSizeReadMatchers();
+  int getSizeWriteMatchers();
+  int getSizeReadAndWriteMatchers();
+  void findAndPrint();
+  ~Finder() = default;
+};
+
 } // namespace matchers
+
+// debug functions.
+
+//
+// overloading << for printing isl::space
+inline auto& operator<<(std::ostream &OS, isl::space s) {
+  OS << s.to_str() << "\n";
+  return OS;
+}
+
+//
+// helper function for printing single constraint.
+inline void print_single_constraint(std::ostream &OS,
+                                    const constraints::singleConstraint &c) {
+  OS << std::get<0>(c) << "," << std::get<1>(c).to_str();
+}
+
+//
+// overloading << for printing single constraint.
+inline auto& operator<<(std::ostream &OS, const constraints::singleConstraint &c) {
+  OS << "(";
+  print_single_constraint(OS, c);
+  return OS << ")";
+}
+
+//
+// helper function for multiple constraints.
+inline void print_multiple_constraints(std::ostream &OS,
+                                       const constraints::MultipleConstraints &mc) {
+  for(std::size_t i = 0; i < mc.size()-1; ++i) {
+    OS << mc[i] << ",";
+  }
+  OS << mc[mc.size()-1];
+}
+
+//
+// overloading << for multiple constraints.
+inline auto& operator<<(std::ostream &OS, const constraints::MultipleConstraints &mc) {
+  OS << "[";
+  print_multiple_constraints(OS, mc);
+  return OS << "]";
+}
+
+//
+// overloading << for ConstraintsList
+inline auto& operator<<(std::ostream &OS, const constraints::ConstraintsList &mc) {
+  OS << "{";
+  OS << "\n";
+  OS << "Involved Dims = " << mc.dimsInvolved << "\n";
+  if(mc.dimsInvolved == -1) {
+    OS << "Constraints = empty";
+    OS << "\n";
+    return OS << "}";
+  }
+  OS << "Constraints = " << mc.constraints;
+  OS << "\n";
+  return OS << "}";
+}
+
+//
+// overloading << for printing a std::vector<constraints::ConstrainsList>
+inline auto& operator<<(std::ostream &OS, 
+			const std::vector<constraints::ConstraintsList> &v) {
+  for(size_t i=0; i<v.size(); ++i) {
+    OS << v[i] << "\n";
+  }
+  return OS;
+}
+
+//
+// overloading of << to print the entire structure of
+// a matchers.
+inline auto& operator<<(std::ostream &OS, const matchers::RelationMatcher &m) {
+
+  OS << "@@@@@@\n";
+  switch(m.getType()) {
+  case 0:
+    OS << "Read matcher\n";
+    break;
+  case 1:
+    OS << "Write matcher\n";
+    break;
+  case 2:
+    OS << "Read & Write matcher\n";
+  default:
+    OS << "NA\n";
+  }
+
+  int n_labels = m.getIndexesSize();
+  for(int i=0; i<n_labels; ++i) {
+    OS << m.getIndex(i) << "\n";
+  }
+
+  if(m.isSet()) {
+    for(int i=0; i<n_labels; ++i){
+      auto payload = m.getDims(i);
+      for(size_t j=0; j<payload.size(); ++j) {
+        OS << payload[j].to_str() << "\n";
+      }
+    }
+  }
+  return OS << "@@@@@@\n";
+}
+
+//
+// overloading of << to print a std::vector<RelationMatcher>
+inline auto& operator<<(std::ostream &OS,
+                        const std::vector<matchers::RelationMatcher> &vm) {
+  for(size_t i=0; i<vm.size(); ++i) {
+    OS << vm[i] << "\n";
+  }
+
+  return OS;
+}
+
+
+//
+// overloading of << to print std::vector<isl::map>
+inline auto& operator<<(std::ostream &OS, const std::vector<isl::map> &v) {
+  for(size_t i=0; i<v.size(); ++i) {
+    OS << v[i].to_str() << "\n";
+  }
+  return OS << "\n";
+}
+
+//
+// overloading of << to print isl::union_map 
+inline auto& operator<<(std::ostream &OS, const isl::union_map &m) {
+  return OS << m.to_str() << "\n";
+}
+
+//
+// overloading of << to print std::vector<isl::pw_aff>
+inline auto& operator<<(std::ostream &OS, const std::vector<isl::pw_aff> &v) {
+  for(size_t i=0; i<v.size(); ++i) {
+    OS << v[i].to_str() << "\n";
+  }
+  return OS;
+}
+
+//
+// overloading of << to print isl::pw_aff
+inline auto& operator<<(std::ostream &OS, const isl::pw_aff &a) {
+  return OS << a.to_str() << "\n";
+}
 
 #include "matchers-inl.h"
 

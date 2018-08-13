@@ -55,6 +55,7 @@ isl_schedule_node_type toIslType(ScheduleNodeType type) {
     matcher.indexes_.push_back(a);                                             \
     matcher.indexes_.push_back(b);                                             \
     matcher.setDim_.reserve(2);                                                \
+    matcher.isSetDim_ = false;						       \
     return matcher;                                                            \
   }                                                                            \
                                                                                \
@@ -63,11 +64,13 @@ isl_schedule_node_type toIslType(ScheduleNodeType type) {
     matcher.type_ = type;                                                      \
     matcher.indexes_.push_back(a);                                             \
     matcher.setDim_.reserve(1);                                                \
+    matcher.isSetDim_ = false;						       \
     return matcher;                                                            \
   }
 
 DEF_TYPE_MATCHER_RELATION(read, RelationKind::read)
 DEF_TYPE_MATCHER_RELATION(write, RelationKind::write)
+DEF_TYPE_MATCHER_RELATION(readAndWrite, RelationKind::readAndWrite)
 
 /* Definitions for schedule tree matcher factory functions ********************/
 #define DEF_TYPE_MATCHER(name, type)                                           \
