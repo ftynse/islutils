@@ -7,7 +7,7 @@ Given two matchers:
 
 we expect:
 
-C[i+1][j] and B[k][j]
+C[i][j+1] and B[k][j+1]
 
 to be matched.
 */
@@ -24,7 +24,7 @@ int main(){
   for(int i=0; i<N; ++i)
     for(int j=0; j<N; ++j) {
       for(int k=0; k<N; ++k)
-        C[i+1][j] += B[k][j] * A[i][k];
+        C[i][j+1] += B[k][j+1] * A[i][k];
     }
   #pragma endscop
 }

@@ -4,8 +4,10 @@
 #include <vector>
 
 // A constraint is introduced by an access and a matcher.
-// In more details, a constraint looks like (A, i0). Meaning that
-// we have assigned dimension i0 to literal A.
+// In more details, a constraint looks like ('A', i0). Meaning that
+// we have assigned dimension i0 to literal 'A'.
+// 'A' is just a placeholder and may contain a complex
+// expression like 2i+j+3.
 
 namespace matchers {
   class RelationMatcher;
@@ -19,24 +21,24 @@ typedef std::tuple<char, isl::pw_aff> singleConstraint;
 typedef std::vector<singleConstraint> MultipleConstraints;
 
 // decouple matcher from constraint list.
+// dimsInvolved is the number of dimensions
+// contained in the constraint list.
+// constraints are the constraints introduced by 
+// a matcher or by comparing two lists.
 struct ConstraintsList {
   int dimsInvolved = -1;
   MultipleConstraints constraints;
 };
 
-/*
-ConstraintsList buildMatcherConstraintsWrites(
-                matchers::RelationMatcher &matcher,
-                isl::union_map &accessesWrites);
 
-ConstraintsList buildMatcherConstraintsReads(
-                matchers::RelationMatcher &matcher,
-                isl::union_map &accessesReads);
-*/
+// build the constraint list for the matcher.
 ConstraintsList buildMatcherConstraints(
 		matchers::RelationMatcher &matcher,
-		isl::union_map &accesses);
+		isl::union_map &accessesRead,
+		isl::union_map &accessesWrite);
 
+// compare two list and generate and new
+// constraint list.
 ConstraintsList compareLists(
                 ConstraintsList &listOne,
                 ConstraintsList &listTwo);
@@ -84,6 +86,11 @@ class RelationMatcher;
 
 typedef std::vector<isl::pw_aff> matchingDims;
 
+struct memoryAccess {
+  RelationKind type_;
+  isl::map accessMap_;
+};
+
 // TODO: extend to use variadic template
 class RelationMatcher {
 #define DECL_FRIEND_TYPE_MATCH(name)                                           \
@@ -95,10 +102,12 @@ class RelationMatcher {
 #undef DECL_FRIEND_TYPE_MATCH
 
 public:
-  // is a read access?
+  // is a read matcher?
   bool isRead() const;
-  // is a write access?
+  // is a write matcher?
   bool isWrite() const;
+  // is a read&Write matcher
+  bool isReadAndWrite() const;
   // return literal at index i
   char getIndex(unsigned i) const;
   // get number of literals
@@ -109,8 +118,8 @@ public:
   int getType() const;
   // get the isl::pw_aff for the dim. i
   std::vector<isl::pw_aff> getDims(int i) const;
-  // get the accessed
-  std::vector<isl::map> getAccesses(isl::union_map &accesses);
+  // get the access
+  memoryAccess getAccess(isl::union_map &accesses);
   // are the dimension set?
   bool isSet() const;
   // set flag for dimension(s)
@@ -121,11 +130,14 @@ private:
   // type (read, write or readAndWrite)
   RelationKind type_;
   // describe how the indexes should look like. Indexes layout.
+  // These are for now just placeholder, we want to extend them
+  // to contain more complex expression like: 2i+j+1.
   std::vector<char> indexes_;
   // once we figured out a combination that
   // satisfy all the matcher we "fixed" the
   // dimensions.
   std::vector<matchingDims> setDim_;
+  // are the dimensions already set?
   bool isSetDim_;
 };
 
@@ -310,28 +322,60 @@ hasSibling(const ScheduleNodeMatcher &siblingMatcher);
 std::function<bool(isl::schedule_node)>
 hasDescendant(const ScheduleNodeMatcher &descendantMatcher);
 
+// class used to handle all the bolerplate of handling
+// the matchers.
+
 class Finder {
   private:
+    // set of read/write accesses.
     isl::union_map reads, writes;
+    // read matchers.
     std::vector<RelationMatcher> readMatchers;
+    // write matchers.
     std::vector<RelationMatcher> writeMatchers;
+    // read and write matchers.
     std::vector<RelationMatcher> readAndWriteMatchers;
+    // remove two lists of matchers.
     void merge(std::vector<RelationMatcher> &first, 
 	       std::vector<RelationMatcher> &second);
   public:
   Finder(isl::union_map reads,
 	 isl::union_map writes, 
          std::vector<RelationMatcher> &matchers);
+  // number of read matchers.
   int getSizeReadMatchers();
+  // number of write matchers.
   int getSizeWriteMatchers();
+  // number of read & write matchers.
   int getSizeReadAndWriteMatchers();
+  // find method. Given the set of matchers and the 
+  // accesses find all the matching and print to stdout.
   void findAndPrint();
+  // return the matched accesses.
+  std::vector<memoryAccess> find();
   ~Finder() = default;
 };
 
 } // namespace matchers
 
 // debug functions.
+
+//
+// overloading << for printing a memoryAccess
+inline auto &operator<<(std::ostream &OS, matchers::memoryAccess &m) {
+  auto type = m.type_;
+  if(type == matchers::RelationKind::read)
+    OS << "type: read" << "\n";
+  else if(type == matchers::RelationKind::write)
+    OS << "type: write" << "\n";
+  else OS << "type: read and write\n";
+  OS << "map: : " << m.accessMap_.to_str() << "\n";
+  return OS;
+}
+
+//
+// overloading << for printing a std::vector of memoryAccess
+ 
 
 //
 //overloading << for printing std::vector<isl::set>

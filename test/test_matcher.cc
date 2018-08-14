@@ -111,6 +111,7 @@ TEST(TreeMatcher, finderConstructor) {
   Scop S = Parser("inputs/matmul.c").getScop();
   EXPECT_TRUE(!S.schedule.is_null());
   //S.dump();
+  //std::cout << S.schedule.to_str() << std::endl;
   isl::union_map reads = S.reads;
   //std::cout << reads << std::endl;
   isl::union_map writes = S.mustWrites;
@@ -136,33 +137,123 @@ TEST(TreeMatcher, finderConstructor) {
   EXPECT_TRUE(f3.getSizeReadAndWriteMatchers() == 1);
 }
 
-TEST(TreeMatcher, finderTest) {
-  using namespace matchers;
-  Scop S = Parser("inputs/matmul.c").getScop();
+// helper function for debug.
+void printMatches(std::vector<matchers::memoryAccess> &m) {
+  std::cout << "####" << std::endl;
+  for(size_t i=0; i<m.size(); ++i) {
+    std::cout << m[i] << std::endl;
+  }
+}
+
+// count read 
+int countReadMatched(std::vector<matchers::memoryAccess> &m) {
+  int res = 0;
+  for(size_t i=0; i<m.size(); ++i) {
+    if((m[i].type_ == matchers::RelationKind::read) ||
+       (m[i].type_ == matchers::RelationKind::readAndWrite))
+      res++;
+  }
+  return res;
+}
+
+// count write
+int countWriteMatched(std::vector<matchers::memoryAccess> &m) {
+  int res = 0;
+  for(size_t i=0; i<m.size(); ++i) {
+    if((m[i].type_ == matchers::RelationKind::write) ||
+       (m[i].type_ == matchers::RelationKind::readAndWrite))
+      res++;
+  }
+  return res;
+}
+
+// check the Scop
+Scop checkScop(std::string s) {
+  Scop S = Parser(s).getScop();
   EXPECT_TRUE(!S.schedule.is_null());
+  return S;
+}
+
+// check not empty read and write
+void checkReadAndWrite(Scop S) {
   isl::union_map reads = S.reads;
   isl::union_map writes = S.mustWrites;
   EXPECT_TRUE(reads.n_map() != 0);
   EXPECT_TRUE(writes.n_map() != 0);
+}
+
+TEST(TreeMatcher, finderTest) {
+  using namespace matchers;
+  Scop S = checkScop("inputs/matmul.c");
+  checkReadAndWrite(S);
   auto m1 = read('A','B');
-  //auto m2 = read('A','C');
-  //auto m3 = read('B','C');
-  //auto m4 = write('D','B');
   auto m5 = write('D','B');
   std::vector<RelationMatcher> v;
   v.push_back(m1);
-  //v.push_back(m2);
-  //v.push_back(m3);
-  //v.push_back(m4);
   v.push_back(m5);
-  Finder f = Finder(reads, writes, v);
-  f.findAndPrint();
+  Finder f = Finder(S.reads, S.mustWrites, v);
+  std::vector<memoryAccess> res;
+  res = f.find();
+  //printMatches(res);
+  EXPECT_TRUE(res.size() == 2);
+  int counter = countReadMatched(res);
+  EXPECT_TRUE(counter == 1);
+  counter = countWriteMatched(res);
+  EXPECT_TRUE(counter == 1);
+  S = checkScop("inputs/matmul1.c");
+  checkReadAndWrite(S);
+  Finder ff = Finder(S.reads, S.mustWrites, v);
+  res = ff.find();
+  //printMatches(res);
+  EXPECT_TRUE(res.size() == 2);
+  counter = countReadMatched(res);
+  EXPECT_TRUE(counter == 1);
+  counter = countWriteMatched(res);
+  EXPECT_TRUE(counter == 1);
+  S = checkScop("inputs/matmul2.c");
+  checkReadAndWrite(S);
+  Finder fff = Finder(S.reads, S.mustWrites, v);
+  res = fff.find();
+  EXPECT_TRUE(res.size() == 2);
+  counter = countReadMatched(res);
+  EXPECT_TRUE(counter == 1);
+  counter = countWriteMatched(res);
+  EXPECT_TRUE(counter == 1);
+  S = checkScop("inputs/matmul3.c");
+  checkReadAndWrite(S);
+  Finder ffff = Finder(S.reads, S.mustWrites, v);
+  res = ffff.find();
+  EXPECT_TRUE(res.size() == 2);
+  counter = countReadMatched(res);
+  EXPECT_TRUE(counter == 1);
+  counter = countWriteMatched(res);
+  EXPECT_TRUE(counter == 1);
+
 }
+
 /*
 static __isl_give isl_schedule_node *
 	patternMatching(__isl_take isl_schedule_node *node, void *User) {
-  isl::schedule_node target = isl::manage_copy(node);
-  std::cout << "TargetNode " << target.to_str() << std::endl;
+
+  isl::schedule_node current_node = isl::manage_copy(node);
+
+  if(isl_schedule_node_get_type(current_node.get()) != isl_schedule_node_band)
+    return node;
+
+  auto partialSchedule = isl::manage(	
+    isl_schedule_node_band_get_partial_schedule_union_map(current_node.get()));
+
+  current_node = current_node.child(0);
+  auto LeafType = isl_schedule_node_get_type(current_node.get());
+  current_node = current_node.parent();
+  if(LeafType != isl_schedule_node_leaf ||
+     isl_schedule_node_band_n_member(current_node.get()) < 3 ||
+     current_node.get_schedule_depth() != 0 ||
+     isl_union_map_n_map(partialSchedule.get()) != 1) {
+    std::cout << "not possible candidate" << std::endl;
+    return node;
+  }
+  else std::cout << "possible candidates" << current_node.to_str() << std::endl;
   return node;
 } 
 
@@ -174,6 +265,7 @@ static void walkTree(isl::schedule_node node) {
 TEST(TreeMatcher, matmulFlow) {
   using namespace matchers;
   Scop S = Parser("inputs/matmul.c").getScop();
+  S.dump();
   auto root = S.schedule.get_root();
   walkTree(root);
 	
