@@ -334,6 +334,15 @@ class Finder {
 // debug functions.
 
 //
+//overloading << for printing std::vector<isl::set>
+inline auto& operator<<(std::ostream &OS, std::vector<isl::set> &v) {
+  for(size_t i=0; i<v.size(); ++i) {
+    OS << v[i].to_str() << "\n";
+  }
+  return OS;
+}
+
+//
 // overloading << for printing isl::space
 inline auto& operator<<(std::ostream &OS, isl::space s) {
   OS << s.to_str() << "\n";
