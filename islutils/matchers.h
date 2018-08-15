@@ -3,6 +3,17 @@
 #include "islutils/scop.h"
 #include <vector>
 
+// The matchers work as following:
+// phase 1: we try to figure out a combination of indexes
+// that satisfies the constraints introduce by each matcher.
+// For example,
+// A[i][j] = B[j][i]
+// can be matched with write('A','B') and read('B','A')
+// phase 2: once we figured out the matching combination for
+// the dimensions we check properties on the dimensions
+// like coefficient, increment, and stride.
+
+// Each matcher introduces a set of constraints.
 // A constraint is introduced by an access and a matcher.
 // In more details, a constraint looks like ('A', i0). Meaning that
 // we have assigned dimension i0 to literal 'A'.
@@ -11,6 +22,28 @@
 
 namespace matchers {
   class RelationMatcher;
+
+// at the moment we consider only single
+// dimension placeHolder like 2i+3.
+// Multidimensional placeholder are not allowed 
+// like 2i+3j+h+3.
+// A placeholder object allows to test if some
+// conditions on the placeholder are true.
+// It controls the final matching.
+ 
+  class PlaceHolder {
+    public:
+      isl::val coefficient_;
+      isl::val increment_;
+      isl::val stride_;
+      int outDimPos_;
+      void setCoefficient(isl::val c);
+      void setIncrement(isl::val i);
+      void setStride(isl::val s);
+      void setOutDimPos(int o);
+      PlaceHolder(isl::val c, isl::val i, isl::val s, int o);
+      ~PlaceHolder() = default;
+  };
 }
 
 namespace constraints {
@@ -87,15 +120,16 @@ class RelationMatcher;
 typedef std::vector<isl::pw_aff> matchingDims;
 
 struct memoryAccess {
+  bool valid = false;
   RelationKind type_;
   isl::map accessMap_;
 };
 
 // TODO: extend to use variadic template
 class RelationMatcher {
-#define DECL_FRIEND_TYPE_MATCH(name)                                           \
-  friend RelationMatcher name(char a, char b);                                 \
-  friend RelationMatcher name(char a);
+#define DECL_FRIEND_TYPE_MATCH(name)                                          \
+  friend RelationMatcher name(char a, PlaceHolder pa, char b, PlaceHolder pb);  \
+  friend RelationMatcher name(char a, PlaceHolder pa);                    
   DECL_FRIEND_TYPE_MATCH(read)
   DECL_FRIEND_TYPE_MATCH(write)
   DECL_FRIEND_TYPE_MATCH(readAndWrite)
@@ -127,6 +161,10 @@ public:
   ~RelationMatcher() = default;
 
 private:
+  // 
+  bool checkPlaceHolder(isl::map access);
+  // placeHolder to control the final matching.
+  std::vector<PlaceHolder> placeHolderSet_; 
   // type (read, write or readAndWrite)
   RelationKind type_;
   // describe how the indexes should look like. Indexes layout.

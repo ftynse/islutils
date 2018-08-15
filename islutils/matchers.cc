@@ -4,6 +4,42 @@ using namespace std;
 
 namespace matchers {
 
+// build a placeholder.
+// A placeholder represents a dimension and it is used
+// to check some properties on the dimension.
+PlaceHolder::PlaceHolder(isl::val c, isl::val i, isl::val s, int o) {
+  assert(o == 1 && "for now only single dim");
+  assert(!c.is_zero() && "zero coeff not allowed");
+  assert(c.is_pos() && "non positive coeff not allowed");
+  this->coefficient_ = c;
+  this->increment_ = i;
+  this->stride_ = s;
+  this->outDimPos_ = o;
+} 
+
+// modify the coefficient value if the placeholder
+void PlaceHolder::setCoefficient(isl::val c) {
+  assert(!c.is_zero() && "zero coeff not allowed");
+  assert(c.is_pos() && "non positive coeff not allowed");
+  this->coefficient_ = c;
+}
+
+// modify the increment value in the placeholder
+void PlaceHolder::setIncrement(isl::val i) {
+  this->increment_ = i;
+}
+
+// modify the stride in the placeholder
+void PlaceHolder::setStride(isl::val s) {
+  this->stride_ = s;
+}
+
+// modify the number of dimension in the placeholder.
+void PlaceHolder::setOutDimPos(int o) {
+  this->outDimPos_ = o;
+}
+
+// set the dimensions for the current matcher.
 void RelationMatcher::setDims(constraints::MultipleConstraints &mc) {
   std::vector<isl::pw_aff> tmp;
   for(std::size_t i=0; i<indexes_.size(); ++i) {
@@ -80,6 +116,7 @@ std::vector<isl::pw_aff> RelationMatcher::getDims(int i) const {
 
 
 // [belong to step 4.(see findAndPrint)]
+// TODO: change name and sign of the function as Alex suggested.
 static inline bool isEqual(isl::pw_aff &affOne, isl::pw_aff &affTwo) {
   isl::map mapOne = isl::map::from_pw_aff(affOne);
   isl::map mapTwo = isl::map::from_pw_aff(affTwo);
@@ -129,17 +166,55 @@ static bool checkDimensions(isl::pw_aff &pw, std::vector<isl::pw_aff> &dims) {
   return result;
 }
 
+// check if the placeholder properties are true for the
+// given access.
+bool RelationMatcher::checkPlaceHolder(isl::map access) {
+  isl::pw_multi_aff MultiAff = isl::pw_multi_aff::from_map(access);
+  assert(MultiAff.n_piece() == 1 && "should be single value");
+  bool res = true;
+  for(unsigned ii=0, ie = access.dim(isl::dim::out); ii != ie; ++ii) {
+    isl::pw_aff PwAff = MultiAff.get_pw_aff(ii);
+    PwAff.foreach_piece([&](isl::set, isl::aff aff) {
+      for(unsigned ji=0, je = access.dim(isl::dim::in); ji != je; ++ji) {
+        isl::val v = aff.get_coefficient_val(isl::dim::in, ji);
+        if(!v.is_zero()) {
+          isl::val coeff = v;
+          isl::val inc = aff.get_constant_val();
+          //std::cout << "AFF" << aff.to_str() << std::endl;
+          //std::cout << "COEFF" << coeff.to_str() << std::endl;
+          //std::cout << "INC" << inc.to_str() << std::endl;
+          //std::cout << "INDEX" << ii << std::endl;
+          //std::cout << "P_C"<< placeHolderSet_[ii].coefficient_.to_str() << std::endl;
+          //std::cout << "P_I"<< placeHolderSet_[ii].increment_.to_str() << std::endl;
+          if(!placeHolderSet_[ii].coefficient_.eq(coeff) ||
+             !placeHolderSet_[ii].increment_.eq(inc)) {
+            res = false;
+          }
+        }
+      }
+    });
+  } 
+  return res;
+}
+
 // return the accesses matched
+// TODO: notice that we modify the accesses. change.
 memoryAccess RelationMatcher::getAccess(isl::union_map &accesses) {
-  memoryAccess res;
-  accesses.foreach_map([&](isl::map access) -> isl_stat {
-    isl::space Space = access.get_space();
+ 
+   memoryAccess res;
+
+   std::vector<isl::map> accessesAsMap;
+   accesses.foreach_map([&accessesAsMap](isl::map access) {
+     accessesAsMap.push_back(access); });
+
+  for(size_t i=0; i<accessesAsMap.size(); ++i) {
+    isl::space Space = accessesAsMap[i].get_space();
     
     if(Space.dim(isl::dim::out) != indexes_.size()) {
-      return isl_stat_ok;
+      continue;
     }
 
-    isl::pw_multi_aff MultiAff = isl::pw_multi_aff::from_map(access);
+    isl::pw_multi_aff MultiAff = isl::pw_multi_aff::from_map(accessesAsMap[i]);
     bool equalDims = true;
 
     for(size_t i=0; i<setDim_.size(); ++i) {
@@ -153,18 +228,21 @@ memoryAccess RelationMatcher::getAccess(isl::union_map &accesses) {
     }
 
     if(equalDims) {
-      //std::cout << "[getAccesses]" << access << std::endl;
-      res.accessMap_ = access;
-      res.type_ = type_;
-      //std::cout << "EQUAL DIMS" << equalDims << std::endl;
       // drop the access that matched.
-      isl::map alreadyMatched = accesses.extract_map(access.get_space());
-      accesses = accesses.subtract(isl::union_map(alreadyMatched));
+      // this is done to avoid re-matching the same access.
+      accesses = accesses.subtract(isl::union_map(accessesAsMap[i]));
+      //std::cout << "AFTER" << accesses << std::endl;
+      // we only return the access if it satisfies also the 
+      // placeholder properties and not only the index layout.
+      if(checkPlaceHolder(accessesAsMap[i])) {
+        res.accessMap_ = accessesAsMap[i];
+        res.type_ = type_;
+        res.valid = true;
+        //std::cout << "EQUAL DIMS" << equalDims << std::endl;
+      }
     }
-    
-    return isl_stat_ok;
-    
-  });
+  }
+  //std::cout << res << std::endl;
   return res;
 }
 
@@ -423,20 +501,24 @@ std::vector<memoryAccess> Finder::find() {
   // TODO: do the same for write and readAndWrite
   // getAccess remove the read once matched so
   // we make a copy. (later I will modify it).
-  auto copyReads = reads;
+  //auto copyReads = reads;
   for(size_t i=0; i<readMatchers.size(); ++i) {
-    res.push_back(readMatchers[i].getAccess(copyReads));
+    memoryAccess tmp = readMatchers[i].getAccess(reads);
+    if(tmp.valid)
+      res.push_back(tmp);
   }
-  auto copyWrites = writes;
-  std::vector<isl::map> writeAccesses;
+  //std::cout << "writing start\n";
   for(size_t i=0; i<writeMatchers.size(); ++i) {
-    res.push_back(writeMatchers[i].getAccess(copyWrites));
+    memoryAccess tmp = writeMatchers[i].getAccess(writes);
+    if(tmp.valid)
+      res.push_back(tmp);
   }
 /*
   for(size_t i=0; i<readAndWriteMatchers.size(); ++i) {
     //std::cout << "printing read&Write: ";
   }
 */
+  //std::cout << "returning" << std::endl;
   return res;
 }
 
@@ -532,6 +614,14 @@ void createNewConstraintsList(
 }
 
 
+static inline bool isEqualArray(std::vector<int>a, std::vector<int>b) {
+  if(a.size() != b.size())
+    return false;
+  if (std::equal(a.begin(), a.begin() + a.size(), b.begin()))
+    return true;
+  else return false;
+}
+
 // do the isl::pw_aff relate to the same dimensions?. 
 
 static inline bool isEqual(isl::pw_aff &affOne, isl::pw_aff &affTwo) {
@@ -549,25 +639,27 @@ static inline bool isEqual(isl::pw_aff &affOne, isl::pw_aff &affTwo) {
   for(size_t i=0; i<mapOne.dim(isl::dim::out); ++i) {
     isl::pw_aff PwAffOne = MultiAffOne.get_pw_aff(i);
     isl::pw_aff PwAffTwo = MultiAffTwo.get_pw_aff(i);
-    int indexMapOne = -1;
-    int indexMapTwo = -1;
+    std::vector<int>indexMapOne;
+    std::vector<int>indexMapTwo;
     PwAffOne.foreach_piece([&](isl::set S, isl::aff Aff) -> isl_stat {
       for(size_t j=0; j<mapOne.dim(isl::dim::in); ++j) {
         isl::val V = Aff.get_coefficient_val(isl::dim::in, j);
-        if(!V.is_zero())
-          indexMapOne = j;
+        if(!V.is_zero()) {
+          indexMapOne.push_back(j);
+        }
       }
       return isl_stat_ok;
     });
     PwAffTwo.foreach_piece([&](isl::set S, isl::aff Aff) -> isl_stat {
       for(size_t j=0; j<mapTwo.dim(isl::dim::in); ++j) {
         isl::val V = Aff.get_coefficient_val(isl::dim::in, j);
-        if(!V.is_zero())
-          indexMapTwo = j;
+        if(!V.is_zero()) {
+          indexMapTwo.push_back(j);
+        }
       }
       return isl_stat_ok;
     });
-    if(indexMapOne != indexMapTwo)
+    if(!isEqualArray(indexMapOne, indexMapTwo))
       return false;
   }
   return true;

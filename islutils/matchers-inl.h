@@ -49,9 +49,11 @@ isl_schedule_node_type toIslType(ScheduleNodeType type) {
 // TODO: use variadic template.
 /* Definitions for relation matcher factory functions *************************/
 #define DEF_TYPE_MATCHER_RELATION(name, type)                                  \
-  inline RelationMatcher name(char a, char b) {                                \
+  inline RelationMatcher name(char a, PlaceHolder pa, char b, PlaceHolder pb) {\
     RelationMatcher matcher;                                                   \
-    matcher.type_ = type;                                                      \
+    matcher.type_ = type;						       \
+    matcher.placeHolderSet_.push_back(pa);                                     \
+    matcher.placeHolderSet_.push_back(pb);                                     \
     matcher.indexes_.push_back(a);                                             \
     matcher.indexes_.push_back(b);                                             \
     matcher.setDim_.reserve(2);                                                \
@@ -59,13 +61,14 @@ isl_schedule_node_type toIslType(ScheduleNodeType type) {
     return matcher;                                                            \
   }                                                                            \
                                                                                \
-  inline RelationMatcher name(char a) {                                        \
+  inline RelationMatcher name(char a, PlaceHolder pa) {                        \
     RelationMatcher matcher;                                                   \
-    matcher.type_ = type;                                                      \
-    matcher.indexes_.push_back(a);                                             \
-    matcher.setDim_.reserve(1);                                                \
-    matcher.isSetDim_ = false;						       \
-    return matcher;                                                            \
+    matcher.type_ = type;						       \
+    matcher.placeHolderSet_.push_back(pa);				       \
+    matcher.indexes_.push_back(a);					       \
+    matcher.setDim_.reserve(1);							\
+    matcher.isSetDim_ = false;							\
+    return matcher;								\
   }
 
 DEF_TYPE_MATCHER_RELATION(read, RelationKind::read)
