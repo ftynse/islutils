@@ -53,7 +53,7 @@ void checkReadAndWrite(Scop S) {
 //##############################
 
 
-
+/*
 TEST(AccessMatcher, ReadFromFile) {
   Scop S = Parser("inputs/one-dimensional-init.c").getScop();
   EXPECT_TRUE(!S.schedule.is_null());
@@ -189,6 +189,26 @@ TEST(AccessMatcher, matmul4) {
   EXPECT_TRUE(res.size() == 2);
   int counter = countWriteMatched(res);
   EXPECT_TRUE(counter == 1);
+}
+*/
+
+TEST(AccessMatcher, stencil) {
+  using namespace matchers;
+  auto ctx = isl::ctx(isl_ctx_alloc());
+  Scop S = checkScop("inputs/stencil.c");
+  //S.dump();
+  isl::val Zero = isl::val(ctx,0);
+  isl::val One = isl::val(ctx,1);
+  PlaceHolder dummy = PlaceHolder(One, Zero, Zero, 1);
+  auto m1 = write('A', dummy);
+  auto m2 = read('A', dummy);
+  std::vector<RelationMatcher> v;
+  v.push_back(m1);
+  v.push_back(m2);
+  Finder f = Finder(S.reads, S.mustWrites, v);
+  std::vector<memoryAccess> res;
+  res = f.find();
+  printMatches(res);
 }
    
 int main(int argc, char **argv) {

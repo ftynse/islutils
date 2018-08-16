@@ -6,7 +6,7 @@ namespace matchers {
 
 // build a placeholder.
 // A placeholder represents a dimension and it is used
-// to check some properties on the dimension.
+// to check some properties on the dimension itself.
 PlaceHolder::PlaceHolder(isl::val c, isl::val i, isl::val s, int o) {
   assert(o == 1 && "for now only single dim");
   assert(!c.is_zero() && "zero coeff not allowed");
@@ -117,6 +117,7 @@ std::vector<isl::pw_aff> RelationMatcher::getDims(int i) const {
 
 // [belong to step 4.(see findAndPrint)]
 // TODO: change name and sign of the function as Alex suggested.
+// working in progress change soon.
 static inline bool isEqual(isl::pw_aff &affOne, isl::pw_aff &affTwo) {
   isl::map mapOne = isl::map::from_pw_aff(affOne);
   isl::map mapTwo = isl::map::from_pw_aff(affTwo);
@@ -365,14 +366,14 @@ static bool isEqual(RelationMatcher &a, RelationMatcher &b) {
   return res;
 }
 
-// remove dumplicates from the matchers array.
+// remove duplicates from the matchers array.
 // This is done since duplicates do not add any additional
 // informations.
 // For example: read(A,B) , read(A,B) and read(C,B).
 // will become read(A,B) and read(C,B).
 // Notice that we will take into account later on
 // for the two read(A,B) accesses. It does not make
-// sense to construct constrainst lists for duplicate.
+// sense to construct constraint lists with duplicate.
 std::vector<RelationMatcher> removeDuplicates(
 					std::vector<RelationMatcher> &v) {
   std::vector<RelationMatcher> res = v;
@@ -447,6 +448,7 @@ std::vector<memoryAccess> Finder::find() {
   merge(newMatchersList, newReadAndWriteMatchers);
 
   //step 1. Generate constraints for each matcher.
+  std::cout << "generating const list\n";
   std::vector<constraints::ConstraintsList> c_lists;
   for(size_t i=0; i<newMatchersList.size(); ++i) {
     c_lists.push_back(constraints::buildMatcherConstraints(newMatchersList[i], 
@@ -454,7 +456,7 @@ std::vector<memoryAccess> Finder::find() {
   }
   
   //std::cout << "constraint lists for matchers" << std::endl;
-  //std::cout << c_lists << std::endl;
+  std::cout << c_lists << std::endl;
  
 
   // step 2. find a list that satisfy all the matcher if any.  
@@ -522,7 +524,7 @@ std::vector<memoryAccess> Finder::find() {
   return res;
 }
 
-
+// build a new Finder obj.
 Finder::Finder(isl::union_map reads,
 	       isl::union_map writes,
                std::vector<RelationMatcher> &matchers) {
@@ -613,7 +615,7 @@ void createNewConstraintsList(
   res.dimsInvolved = newConstraints.size();
 }
 
-
+// are the two vectors equal?
 static inline bool isEqualArray(std::vector<int>a, std::vector<int>b) {
   if(a.size() != b.size())
     return false;
@@ -624,7 +626,7 @@ static inline bool isEqualArray(std::vector<int>a, std::vector<int>b) {
 
 // do the isl::pw_aff relate to the same dimensions?. 
 
-static inline bool isEqual(isl::pw_aff &affOne, isl::pw_aff &affTwo) {
+static inline bool accessSameDim(isl::pw_aff &affOne, isl::pw_aff &affTwo) {
   isl::map mapOne = isl::map::from_pw_aff(affOne);
   isl::map mapTwo = isl::map::from_pw_aff(affTwo);
   isl::pw_multi_aff MultiAffOne = isl::pw_multi_aff::from_map(mapOne);
@@ -666,7 +668,7 @@ static inline bool isEqual(isl::pw_aff &affOne, isl::pw_aff &affTwo) {
 }  
   
 // compare two lists and return a new list
-// (set of constrainsts) that satisfies the 
+// (set of constraints) that satisfies the 
 // two input list. It may return an empty list.
 // For example:
 // 1. (B, i1) and (C, i1) 
@@ -690,7 +692,7 @@ ConstraintsList compareLists(
           //std::cout << "listOne" << std::get<1>(listOne.constraints[ii]) << std::endl;
           //std::cout << "listTwo" << std::get<1>(listTwo.constraints[jj]) << std::endl;
           bool condOne = std::get<0>(listOne.constraints[ii]) == std::get<0>(listTwo.constraints[jj]);
-          bool condTwo = isEqual(std::get<1>(listOne.constraints[ii]), std::get<1>(listTwo.constraints[jj]));
+          bool condTwo = accessSameDim(std::get<1>(listOne.constraints[ii]), std::get<1>(listTwo.constraints[jj]));
           if((!condOne && condTwo) || (condOne && !condTwo)){
             isPossible = false;
             //std::cout << "not possible\n";
@@ -722,7 +724,9 @@ ConstraintsList buildMatcherConstraints(
     accessesRead.foreach_map([&list, matcher](isl::map access) -> isl_stat {
       isl::space Space = access.get_space();
       if(Space.dim(isl::dim::out) == matcher.getIndexesSize()) {
+        assert(access.is_single_valued() && "map is not single value");
         isl::pw_multi_aff MultiAff = isl::pw_multi_aff::from_map(access);
+        assert(MultiAff.n_piece() == 1 && "pma not single value");
         for(unsigned u=0; u<access.dim(isl::dim::out); ++u) {
           isl::pw_aff PwAff = MultiAff.get_pw_aff(u);
           auto t = std::make_tuple(matcher.getIndex(u), PwAff);
@@ -736,7 +740,9 @@ ConstraintsList buildMatcherConstraints(
     accessesWrite.foreach_map([&list, matcher](isl::map access) -> isl_stat {
       isl::space Space = access.get_space();
       if(Space.dim(isl::dim::out) == matcher.getIndexesSize()) {
+        assert(access.is_single_valued() && "map is not single value");
         isl::pw_multi_aff MultiAff = isl::pw_multi_aff::from_map(access);
+        assert(MultiAff.n_piece() == 1 && "pma not single value");
         for(unsigned u=0; u<access.dim(isl::dim::out); ++u) {
           isl::pw_aff PwAff = MultiAff.get_pw_aff(u);
 	  auto t = std::make_tuple(matcher.getIndex(u), PwAff);
