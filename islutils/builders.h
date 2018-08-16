@@ -37,6 +37,8 @@ public:
 ScheduleNodeBuilder domain(isl::union_set uset);
 ScheduleNodeBuilder domain(isl::union_set uset, ScheduleNodeBuilder &&child);
 
+ScheduleNodeBuilder mark(isl_id* id);
+
 ScheduleNodeBuilder band(isl::multi_union_pw_aff mupa);
 ScheduleNodeBuilder band(isl::multi_union_pw_aff mupa,
                          ScheduleNodeBuilder &&child);

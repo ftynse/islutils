@@ -10,6 +10,175 @@ TEST(TreeMatcher, ReadFromFile) {
   EXPECT_TRUE(!S.schedule.is_null());
 }
 
+static isl::schedule_node detect_band_node(Scop* S, isl::schedule_node node)
+{
+   if (isl_schedule_node_get_type(node.get()) == isl_schedule_node_band) {
+        if (isl_schedule_node_band_member_get_coincident(node.get(), 0)) {
+          isl_id* id = isl_id_alloc(S->mustWrites.get_ctx().get(), "kernel code", NULL);
+          using namespace builders;
+          auto insertKernelMarker = mark(id);
+	  node = insertKernelMarker.insertAt(node);
+          node = node.child(0); // as we need to proceed to actual band node
+        } else {
+	  isl_id* id = isl_id_alloc(S->mustWrites.get_ctx().get(), "host code", NULL);
+          using namespace builders;
+          auto insertHostMarker = mark(id);
+          node = insertHostMarker.insertAt(node);
+          node = node.child(0); // as we need to proceed to actual band node
+	}
+    }
+    size_t nChildren = static_cast<size_t>(isl_schedule_node_n_children(node.get()));
+    for (size_t i = 0; i < nChildren; ++i) {
+       auto child_node = node.child(i);
+       child_node = detect_band_node(S, child_node);
+       node = child_node.parent();
+    }
+
+    if (isl_schedule_node_get_type(node.get()) == isl_schedule_node_band) {
+        return node.parent();
+    }
+    return node;
+}
+static void compute_flow_dep(struct Scop *S)
+{
+    isl_union_access_info *access;
+    isl_union_flow *flow; 
+    isl_union_map *kills, *must_writes;
+
+    access = isl_union_access_info_from_sink(isl_union_map_copy(S->reads.get()));
+    must_writes = isl_union_map_copy(S->mustWrites.get());
+    access = isl_union_access_info_set_may_source(access,
+                              isl_union_map_copy(S->mayWrites.get()));
+    access = isl_union_access_info_set_schedule(access,
+                              isl_schedule_copy(S->schedule.get()));
+    flow = isl_union_access_info_compute_flow(access);
+   
+    auto may_dependence = isl::manage(isl_union_flow_get_may_dependence(flow)); 
+    S->depFlow = may_dependence;
+    auto live_in = isl::manage(isl_union_flow_get_may_no_source(flow));
+    S->liveIn = live_in;
+}
+
+static void compute_dependencies(struct Scop *S)
+{
+  isl_union_map *may_source, *dep_false;
+  isl_union_access_info *access;
+  isl_union_flow *flow;
+
+  compute_flow_dep(S);
+  
+  may_source = isl_union_map_union(isl_union_map_copy(S->mayWrites.get()),
+                               isl_union_map_copy(S->reads.get()));  
+  access = isl_union_access_info_from_sink(
+                               isl_union_map_copy(S->mayWrites.get()));
+  access = isl_union_access_info_set_may_source(access, may_source);
+  access = isl_union_access_info_set_schedule(access,
+                               isl_schedule_copy(S->schedule.get()));
+  
+  flow = isl_union_access_info_compute_flow(access);
+  
+  dep_false = isl_union_flow_get_may_dependence(flow);
+  dep_false = isl_union_map_coalesce(dep_false);
+  auto final_dep_false = isl::manage(dep_false);
+  S->depFalse = final_dep_false; 
+}
+
+static isl_schedule_constraints* compute_schedule_constraints(isl_schedule_constraints *sc, isl_union_map *validity,
+					 isl_union_map *coincidence, Scop* S)
+{
+  sc = isl_schedule_constraints_on_domain(isl_union_set_copy(S->domain().get()));
+
+  validity = isl_union_map_copy(S->depFlow.get());
+  validity = isl_union_map_union(validity,
+                               isl_union_map_copy(S->depFalse.get()));
+  coincidence = isl_union_map_copy(validity);
+
+  sc = isl_schedule_constraints_set_coincidence(sc, coincidence);
+  sc = isl_schedule_constraints_set_validity(sc, validity);
+  sc = isl_schedule_constraints_set_proximity(sc,
+                               isl_union_map_copy(S->depFlow.get()));
+  return sc;
+}
+
+TEST(TreeMatcher, ReadFromFile1) {
+  Scop S = Parser("inputs/jacobi-1d_2.c").getScop();
+
+  using namespace matchers;
+
+  auto matcher =
+      domain(
+        band(
+         sequence(
+          filter(
+            band(leaf())),
+          filter(
+            band(leaf())))));
+
+  auto node = isl_schedule_get_root(S.schedule.get());
+  auto cpp_node = isl::manage(node);
+
+  EXPECT_TRUE(ScheduleNodeMatcher::isMatching(matcher, cpp_node));
+
+  /* set options */
+  isl_options_set_schedule_maximize_band_depth(S.mustWrites.get_ctx().get(), 1);
+  isl_options_set_schedule_serialize_sccs(S.mustWrites.get_ctx().get(), 1);
+  isl_options_set_schedule_maximize_coincidence(S.mustWrites.get_ctx().get(), 1);
+  isl_options_set_schedule_max_coefficient(S.mustWrites.get_ctx().get(), 1);
+
+  /* compute flow and dependencies */
+  compute_dependencies(&S); 
+
+  /* compute schedule constraints */
+  isl_schedule_constraints *sc;
+  isl_union_map *validity, *coincidence;
+  sc = compute_schedule_constraints(sc, validity, coincidence, &S);
+  
+  /* compute new schedule based on new constraints */
+  auto new_schedule = isl_schedule_constraints_compute_schedule(sc);
+  std::cout<<"New schedule"<<std::endl;
+  isl_schedule_node_dump(isl_schedule_get_root(new_schedule));
+
+  std::cout<<"Old schedule\n"<<std::endl;
+  isl_schedule_node_dump(isl_schedule_get_root(S.schedule.get())); 
+
+  auto new_node = isl_schedule_get_root(new_schedule);
+  auto new_cpp_node = isl::manage(new_node);
+    
+  new_cpp_node = detect_band_node(&S, new_cpp_node);
+  
+  std::cout<<"Dump schedule with mark nodes\n"<<std::endl;
+  isl_schedule_node_dump(new_cpp_node.get());
+}
+
+TEST(TreeMatcher, ReadFromFile2) {
+  Scop S = Parser("inputs/lu.c").getScop();
+  EXPECT_TRUE(!S.schedule.is_null());
+
+  isl_schedule_get_root(S.schedule.get());
+  isl_schedule_node_dump(isl_schedule_get_root(S.schedule.get()));
+
+  auto node = isl_schedule_get_root(S.schedule.get());
+
+  using namespace matchers;
+
+  auto matcher =
+      domain(
+        band(
+         sequence(
+          filter(
+           band(
+	    sequence(
+	     filter(band(leaf())),
+	     filter(leaf())))),
+          filter(
+           band(
+	    band(leaf()))))));
+
+  auto cpp_node = isl::manage(node);
+
+  EXPECT_TRUE(ScheduleNodeMatcher::isMatching(matcher, cpp_node));
+}
+
 TEST(TreeMatcher, CompileTest) {
   using namespace matchers;
 

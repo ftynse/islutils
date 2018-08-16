@@ -183,6 +183,13 @@ ScheduleNodeBuilder filter(isl::union_set uset, ScheduleNodeBuilder &&child) {
   return builder;
 }
 
+ScheduleNodeBuilder mark(isl_id* id) {
+  ScheduleNodeBuilder builder;
+  builder.current_ = isl_schedule_node_mark;
+  builder.id_ = id;
+  return builder;
+}
+
 ScheduleNodeBuilder sequence(std::vector<ScheduleNodeBuilder> &&children) {
   ScheduleNodeBuilder builder;
   builder.current_ = isl_schedule_node_sequence;
