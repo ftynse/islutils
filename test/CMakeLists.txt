@@ -18,6 +18,10 @@ target_link_libraries(test_transformer islutils gtest_main)
 add_executable(test_access test_access.cc)
 target_link_libraries(test_access islutils gtest)
 
+add_executable(test_extension test_extension.cc)
+target_link_libraries(test_extension islutils gtest)
+
+
 add_custom_target(check COMMAND echo "Running all")
 
 add_custom_target(check-matchers  COMMAND test_matcher)
@@ -35,8 +39,12 @@ add_dependencies(check check-transformer)
 add_custom_target(check-access COMMAND test_access)
 add_dependencies(check check-transformer)
 
+add_custom_target(check-extension COMMAND test_extension)
+add_dependencies(check check-extension)
+
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/inputs/one-dimensional-init.c"
      "${CMAKE_CURRENT_BINARY_DIR}/inputs/one-dimensional-init.c"; COPYONLY)
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/inputs/stencil.c"
      "${CMAKE_CURRENT_BINARY_DIR}/inputs/stencil.c"; COPYONLY)
+

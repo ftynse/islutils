@@ -23,6 +23,10 @@ public:
   isl::union_map reads;
   isl::union_map mayWrites;
   isl::union_map mustWrites;
+
+  isl::union_map liveIn;
+  isl::union_map depFlow;
+  isl::union_map depFalse;
   /// \}
 
   inline void dump();

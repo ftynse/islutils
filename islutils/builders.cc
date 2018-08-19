@@ -88,11 +88,9 @@ isl::schedule_node ScheduleNodeBuilder::insertSingleChildTypeNodeAt(
     node = isl::manage(
         isl_schedule_node_insert_mark(node.release(), isl_id_copy(id_)));
   } else if (current_ == isl_schedule_node_extension) {
-    assert(false && "NYI: extension nodes");
-    return isl::schedule_node();
-    // TODO: implement extension nodes
-    // we probably need to constuct a subtree starting at this node then "graft"
-    // it. hopefully this will not screw up the anchoring constraints.
+    isl_schedule_node *graft;
+    graft = isl_schedule_node_from_extension(umap_.copy());
+    node = isl::manage(isl_schedule_node_graft_before(node.release(), isl_schedule_node_copy(graft)));
   }
 
   if (children_.size() > 1) {
@@ -142,6 +140,21 @@ isl::schedule_node ScheduleNodeBuilder::build() const {
   }
   return insertAt(isl::schedule_node());
 }
+
+ScheduleNodeBuilder mark(isl_id* id) {
+  ScheduleNodeBuilder builder;
+  builder.current_ = isl_schedule_node_mark;
+  builder.id_ = id;
+  return builder;
+}
+
+ScheduleNodeBuilder extension(isl::union_map map) {
+  ScheduleNodeBuilder builder;
+  builder.current_ = isl_schedule_node_extension;
+  builder.umap_ = map;
+  return builder;
+}
+
 
 ScheduleNodeBuilder domain(isl::union_set uset) {
   ScheduleNodeBuilder builder;
