@@ -90,7 +90,10 @@ isl::schedule_node ScheduleNodeBuilder::insertSingleChildTypeNodeAt(
   } else if (current_ == isl_schedule_node_extension) {
     isl_schedule_node *graft;
     graft = isl_schedule_node_from_extension(umap_.copy());
-    node = isl::manage(isl_schedule_node_graft_before(node.release(), isl_schedule_node_copy(graft)));
+    node = isl::manage(isl_schedule_node_graft_before(node.release(), graft));
+    // be careful here, as this stuff returns pointer not to the extension node,
+    // to be at the extension node you should make node.parent().parent().parent()
+    // just leave default return value here
   }
 
   if (children_.size() > 1) {

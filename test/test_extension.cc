@@ -150,10 +150,10 @@ static isl_schedule_node* differentiateSchedule(isl_schedule_node* Node, void *U
      isl_id* id = isl_id_alloc(S->mustWrites.get_ctx().get(), "kernel code", nullptr);
      using namespace builders;
      auto insertKernelMarker = mark(id);
-     auto cpp_node = isl::manage_copy(Node);
+     auto cpp_node = isl::manage(Node);
      auto new_node =  insertKernelMarker.insertAt(cpp_node);
      isl_schedule_node_dump(new_node.get());
-     return isl_schedule_node_copy(new_node.get());
+     return new_node.release();
   }
   
   return Node;
@@ -168,7 +168,7 @@ static isl_schedule_node* insertCopyBeforeMarkNodes(isl_schedule_node* Node, voi
     auto cpp_node = isl::manage(Node);
     auto new_node =  insertCopyNode.insertAt(cpp_node);
     isl_schedule_node_dump(new_node.get());
-    return isl_schedule_node_copy(new_node.parent().parent().parent().get());
+    return new_node.parent().parent().parent().release();
   }
   return Node;
 }
