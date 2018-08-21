@@ -77,23 +77,23 @@ void constructExtensionNode()
 
 static void compute_flow_dep(struct Scop *S)
 {
-    isl_union_access_info *access;
-    isl_union_flow *flow; 
-    isl_union_map *kills, *must_writes;
+  isl_union_access_info *access;
+  isl_union_flow *flow; 
+  isl_union_map *kills, *must_writes;
 
-    access = isl_union_access_info_from_sink(isl_union_map_copy(S->reads.get()));
-    must_writes = isl_union_map_copy(S->mustWrites.get());
-    access = isl_union_access_info_set_kill(access, must_writes);
-    access = isl_union_access_info_set_may_source(access,
-                              isl_union_map_copy(S->mayWrites.get()));
-    access = isl_union_access_info_set_schedule(access,
-                              isl_schedule_copy(S->schedule.get()));
-    flow = isl_union_access_info_compute_flow(access);
-   
-    auto may_dependence = isl::manage(isl_union_flow_get_may_dependence(flow)); 
-    S->depFlow = may_dependence;
-    auto live_in = isl::manage(isl_union_flow_get_may_no_source(flow));
-    S->liveIn = live_in;
+  access = isl_union_access_info_from_sink(isl_union_map_copy(S->reads.get()));
+  must_writes = isl_union_map_copy(S->mustWrites.get());
+  access = isl_union_access_info_set_kill(access, must_writes);
+  access = isl_union_access_info_set_may_source(access,
+                            isl_union_map_copy(S->mayWrites.get()));
+  access = isl_union_access_info_set_schedule(access,
+                            isl_schedule_copy(S->schedule.get()));
+  flow = isl_union_access_info_compute_flow(access);
+  
+  auto may_dependence = isl::manage(isl_union_flow_get_may_dependence(flow)); 
+  S->depFlow = may_dependence;
+  auto live_in = isl::manage(isl_union_flow_get_may_no_source(flow));
+  S->liveIn = live_in;
 }
 
 static void compute_dependencies(struct Scop *S)
@@ -175,7 +175,7 @@ static isl_schedule_node* differentiateSchedule(isl_schedule_node* Node, void *U
   return Node;
 }
 
-static isl_union_map* createCopyNode(isl_union_set* setCopy, isl_schedule_node* node, TestContext* context)
+static isl_union_map* createCopyNode(bool direction, isl_union_set* setCopy, isl_schedule_node* node, TestContext* context)
 {
 
   isl_union_set_list *filters;
@@ -202,13 +202,12 @@ static isl_union_map* createCopyNode(isl_union_set* setCopy, isl_schedule_node* 
     if (empty < 0) break;
     
     array_name = isl_set_get_tuple_name(pa->extent);
-    name = concat(context->ctx_, "to_device", array_name);
+    name = concat(context->ctx_, direction ? "to_device" : "from_device", array_name);
     id = name ? isl_id_alloc(context->ctx_, name, pa) : NULL;
 
     space = isl_space_set_alloc(context->ctx_, 0, 0);
     space = isl_space_set_tuple_id(space, isl_dim_set, id);
     uset = isl_union_set_from_set(isl_set_universe(space));
-    isl_union_set_dump(uset);
     filters = isl_union_set_list_add(filters, uset);
   }
 
@@ -225,7 +224,7 @@ static isl_union_map* createCopyNode(isl_union_set* setCopy, isl_schedule_node* 
   return extension; 
 }
 
-static isl_schedule_node* insertCopyBeforeMarkNodes(isl_schedule_node* Node, void* User)
+static isl_schedule_node* insertCopyBackForwardMarkNodes(isl_schedule_node* Node, void* User)
 {
   if (isl_schedule_node_get_type(Node) == isl_schedule_node_mark) {
     
@@ -233,12 +232,36 @@ static isl_schedule_node* insertCopyBeforeMarkNodes(isl_schedule_node* Node, voi
     TestContext* context = static_cast<TestContext*>(User);
     isl_union_set* setCopy = isl_union_map_range(context->s_->reads.copy());
     
-    isl_union_map* extensionNode = createCopyNode(setCopy, isl_schedule_node_copy(Node), context); 
+    isl_union_map* extensionForwardNode = createCopyNode(1, setCopy, isl_schedule_node_copy(Node), context); 
+    isl_union_map* extensionBackwardNode = createCopyNode(0, setCopy, isl_schedule_node_copy(Node), context);
     using namespace builders;
-    auto insertCopyNode = extension(isl::manage(extensionNode));
     auto cpp_node = isl::manage(Node);
-    auto new_node =  insertCopyNode.insertAt(cpp_node);
-    isl_schedule_node_dump(new_node.get());
+
+    auto insertCopyForwardNode = extension(isl::manage(extensionForwardNode), 1);
+    auto new_node =  insertCopyForwardNode.insertAt(cpp_node);
+    auto insertCopyBackwardNode = extension(isl::manage(extensionBackwardNode), 0);
+    auto new_node_2 = insertCopyBackwardNode.insertAt(new_node); 
+
+    return new_node_2.parent().parent().parent().release();
+  }
+  return Node;
+}
+
+static isl_schedule_node* insertCopyForwardMarkNodes(isl_schedule_node* Node, void* User)
+{
+  if (isl_schedule_node_get_type(Node) == isl_schedule_node_mark) {
+
+    //create graft node at first
+    TestContext* context = static_cast<TestContext*>(User);
+    isl_union_set* setCopy = isl_union_map_range(context->s_->reads.copy());
+
+    isl_union_map* extensionForwardNode = createCopyNode(1, setCopy, isl_schedule_node_copy(Node), context);
+    using namespace builders;
+    auto cpp_node = isl::manage(Node);
+
+    auto insertCopyForwardNode = extension(isl::manage(extensionForwardNode), 1);
+    auto new_node =  insertCopyForwardNode.insertAt(cpp_node);
+
     return new_node.parent().parent().parent().release();
   }
   return Node;
@@ -357,7 +380,7 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
   std::vector<isl::schedule_node> kernel_nodes;
   Scop S = Parser(fileName).getScop();
   pet_scop *scop_pet = pet_scop_extract_from_C_source(S.mustWrites.get_ctx().get(), fileName.c_str(), NULL);  
-  /* constarct common info Class*/
+  /* construct common info Class*/
 
   isl_schedule_node_dump(isl_schedule_get_root(S.schedule.get()));
   TestContext* context = new TestContext(&S, scop_pet, fileName, S.mustWrites.get_ctx().get());
@@ -404,12 +427,10 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
   /* try to insert smth before mark node */
   printf("try to find mark nodes\n");
 
-  node = isl_schedule_node_map_descendant_bottom_up(node, insertCopyBeforeMarkNodes,
+  node = isl_schedule_node_map_descendant_bottom_up(node, insertCopyBackForwardMarkNodes,
                                              (static_cast<void *>(context)));
-
+  isl_schedule_node_dump(node);
 }
-
-
 
 int main(int argc, char **argv) {
   bool computeSchedule = true;

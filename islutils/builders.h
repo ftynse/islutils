@@ -32,7 +32,7 @@ public:
   isl::multi_union_pw_aff mupa_;
   isl::union_map umap_;
   isl_id *id_;
-
+  bool direction_;
 };
 
 ScheduleNodeBuilder domain(isl::union_set uset);
@@ -40,7 +40,7 @@ ScheduleNodeBuilder domain(isl::union_set uset, ScheduleNodeBuilder &&child);
 
 ScheduleNodeBuilder mark(isl_id* id);
 
-ScheduleNodeBuilder extension(isl::union_map map);
+ScheduleNodeBuilder extension(isl::union_map map, bool direction);
 
 ScheduleNodeBuilder band(isl::multi_union_pw_aff mupa);
 ScheduleNodeBuilder band(isl::multi_union_pw_aff mupa,
