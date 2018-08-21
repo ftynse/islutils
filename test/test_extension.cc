@@ -5,7 +5,7 @@
 #include <vector>
 #include "gtest/gtest.h"
 #include "pet.h"
-
+#include "test_extension.h"
 
 static char *concat(isl_ctx *ctx, const char *a, const char *b)
 {
@@ -21,8 +21,6 @@ static char *concat(isl_ctx *ctx, const char *a, const char *b)
 
         return s;
 }
-
-
 
 /*
 static isl::schedule_node traverse_check(Scop* S, isl::schedule_node node)
@@ -177,13 +175,67 @@ static isl_schedule_node* differentiateSchedule(isl_schedule_node* Node, void *U
   return Node;
 }
 
+static isl_union_map* createCopyNode(isl_union_set* setCopy, isl_schedule_node* node, TestContext* context)
+{
+
+  isl_union_set_list *filters;
+  filters = isl_union_set_list_alloc(context->ctx_, 0);
+
+  for (int i = 0; i < context->petScop_->n_array; ++i) {
+    isl_space *space;
+    isl_set *accessed_i;
+    int empty;
+    const char *name;
+    const char *array_name;
+    isl_id *id;
+    isl_union_set *uset;
+    struct pet_array* pa = context->petScop_->arrays[i];
+
+    space = isl_set_get_space(pa->extent);
+
+    accessed_i = isl_union_set_extract_set(setCopy, space);
+
+    empty = isl_set_plain_is_empty(accessed_i);
+
+    if (empty) continue;
+     
+    if (empty < 0) break;
+    
+    array_name = isl_set_get_tuple_name(pa->extent);
+    name = concat(context->ctx_, "to_device", array_name);
+    id = name ? isl_id_alloc(context->ctx_, name, pa) : NULL;
+
+    space = isl_space_set_alloc(context->ctx_, 0, 0);
+    space = isl_space_set_tuple_id(space, isl_dim_set, id);
+    uset = isl_union_set_from_set(isl_set_universe(space));
+    isl_union_set_dump(uset);
+    filters = isl_union_set_list_add(filters, uset);
+  }
+
+  isl::schedule_node cpp_node = isl::manage(node);
+  cpp_node = cpp_node.child(0);
+
+  isl_union_set* all = isl_union_set_list_union(isl_union_set_list_copy(filters));
+  int depth = isl_schedule_node_get_schedule_depth(cpp_node.copy());
+  auto space = depth < 0 ? NULL : isl_space_set_alloc(context->ctx_, 0, depth);
+  isl_union_set* domain = isl_union_set_from_set(isl_set_universe(space));
+
+  isl_union_map* extension = isl_union_map_from_domain_and_range(domain, all);
+
+  return extension; 
+}
 
 static isl_schedule_node* insertCopyBeforeMarkNodes(isl_schedule_node* Node, void* User)
 {
-  isl_union_map* test_map = static_cast<isl_union_map*>(User);
   if (isl_schedule_node_get_type(Node) == isl_schedule_node_mark) {
+    
+    //create graft node at first
+    TestContext* context = static_cast<TestContext*>(User);
+    isl_union_set* setCopy = isl_union_map_range(context->s_->reads.copy());
+    
+    isl_union_map* extensionNode = createCopyNode(setCopy, isl_schedule_node_copy(Node), context); 
     using namespace builders;
-    auto insertCopyNode = extension(isl::manage(test_map));
+    auto insertCopyNode = extension(isl::manage(extensionNode));
     auto cpp_node = isl::manage(Node);
     auto new_node =  insertCopyNode.insertAt(cpp_node);
     isl_schedule_node_dump(new_node.get());
@@ -304,9 +356,11 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
 
   std::vector<isl::schedule_node> kernel_nodes;
   Scop S = Parser(fileName).getScop();
+  pet_scop *scop_pet = pet_scop_extract_from_C_source(S.mustWrites.get_ctx().get(), fileName.c_str(), NULL);  
+  /* constarct common info Class*/
 
   isl_schedule_node_dump(isl_schedule_get_root(S.schedule.get()));
-
+  TestContext* context = new TestContext(&S, scop_pet, fileName, S.mustWrites.get_ctx().get());
   /* set options */
   isl_options_set_ast_build_detect_min_max(S.mustWrites.get_ctx().get(), 1);
   isl_options_set_ast_print_macro_once(S.mustWrites.get_ctx().get(), 1);
@@ -350,98 +404,9 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
   /* try to insert smth before mark node */
   printf("try to find mark nodes\n");
 
-  isl_union_map* test_map = isl_union_map_copy(S.mustWrites.get());
-  auto cpp_map = isl::manage(test_map);
-  //node = isl_schedule_node_map_descendant_bottom_up(node, insertCopyBeforeMarkNodes,
-  //                                           (static_cast<void *>(test_map)));
+  node = isl_schedule_node_map_descendant_bottom_up(node, insertCopyBeforeMarkNodes,
+                                             (static_cast<void *>(context)));
 
-  //auto cpp_node_final = isl::manage(node).child(0).child(0).child(0).child(0).child(0);
-  //auto prefix = isl_schedule_node_get_prefix_schedule_union_map(cpp_node_final.copy());
-  //printf("\ndump prefix\n");
-  //isl_union_map_dump(prefix);
-  //int depth = isl_schedule_node_get_schedule_depth(cpp_node_final.get());
-  //auto space = depth < 0 ? NULL : isl_space_set_alloc(S.mustWrites.get_ctx().get(), 0, depth);
-  //isl_space_dump(space); 
-  //auto domain = isl_union_set_from_set(isl_set_universe(space));
-  //printf("dump domain\n");
-  //isl_union_set_dump(domain);
-  //isl_union_map_range - seems create union set from union map
-  
-  /* create pet scop */
-  auto setCopy = isl_union_map_range(S.reads.copy());
-  isl_union_set_dump(setCopy);
-  
-  pet_scop *scop_pet = pet_scop_extract_from_C_source(S.mustWrites.get_ctx().get(), fileName.c_str(), NULL);
-
-  pet_scop_dump(scop_pet);  
-
-  auto number_arrays = scop_pet->n_array;
-  isl_union_set_list *filters;
-  filters = isl_union_set_list_alloc(S.mustWrites.get_ctx().get(), 0);
-
-  for (int i = 0; i < number_arrays; ++i) { 
-    isl_space *space;
-    isl_set *accessed_i;
-    int empty;    
-    const char *name;
-    const char *array_name;
-    isl_id *id;
-    struct pet_array* pa = scop_pet->arrays[i];
-    isl_union_set *uset;
- 
-    space = isl_set_get_space(pa->extent);
-    printf("dump info\n");
-    isl_space_dump(space);
-    isl_union_set_dump(setCopy);
-  
-    accessed_i = isl_union_set_extract_set(setCopy, space);
-     
-    empty = isl_set_plain_is_empty(accessed_i);
-    
-    printf("empty result:%i\n", empty);
-    if (empty) continue;    
-
-    array_name = isl_set_get_tuple_name(pa->extent);
-    name = concat(S.mustWrites.get_ctx().get(), "to_device", array_name);
-    printf("name:%s\n", name);
-    id = name ? isl_id_alloc(S.mustWrites.get_ctx().get(), name, pa) : NULL;
-
-    space = isl_space_set_alloc(S.mustWrites.get_ctx().get(), 0, 0);
-    space = isl_space_set_tuple_id(space, isl_dim_set, id);
-    isl_space_dump(space);
-    uset = isl_union_set_from_set(isl_set_universe(space));
-    isl_union_set_dump(uset);
-    filters = isl_union_set_list_add(filters, uset);
-    printf("empty result:%i\n", empty);
-  }
-  /* create normal insert statement */
-  auto cpp_node = isl::manage(node);
-  cpp_node = cpp_node.child(0).child(0).child(0).child(0);
-  auto all = isl_union_set_list_union(isl_union_set_list_copy(filters));
-  int depth = isl_schedule_node_get_schedule_depth(cpp_node.copy());
-  auto space = depth < 0 ? NULL : isl_space_set_alloc(S.reads.get_ctx().get(), 0, depth); 
-  auto domain = isl_union_set_from_set(isl_set_universe(space));
-  auto extension = isl_union_map_from_domain_and_range(domain, all);
-  auto graft = isl_schedule_node_from_extension(extension);
-  
-  auto node_new = isl_schedule_node_graft_before(cpp_node.copy(), graft); 
-  isl_schedule_node_dump(node_new);
-  
-  /* this is how to insert extension */
-  //auto cpp_node = isl::manage(node);
-  //cpp_node = cpp_node.child(0);
-  //isl_schedule_node *graft;
-  //graft = isl_schedule_node_from_extension(test_map);
-  //node = isl_schedule_node_graft_before(cpp_node.get(), graft);  
-  //isl_schedule_node_dump(node);
- 
-  /* this is how to insert it with builders */
-  //using namespace builders;
-  //auto insertCopyNode = extension(cpp_map);
-  //auto cpp_node = isl::manage(node);
-  //cpp_node = cpp_node.child(0).child(0).child(0).child(0);
-  //cpp_node = insertCopyNode.insertAt(cpp_node);
-  //isl_schedule_node_dump(cpp_node.parent().parent().parent().get());
 }
 
 
