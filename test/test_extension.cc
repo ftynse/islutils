@@ -22,6 +22,17 @@ static char *concat(isl_ctx *ctx, const char *a, const char *b)
         return s;
 }
 
+template <class ... Args>
+static void annotateStatement(std::string st, Args... args) 
+{
+  std::string annotation = strAnnotation(args...);
+  annotationMap.insert({st, annotation});
+}
+
+//static void markLoop()
+//{
+//
+//}
 /*
 static isl::schedule_node traverse_check(Scop* S, isl::schedule_node node)
 {
@@ -159,7 +170,7 @@ static isl_schedule_node* differentiateSchedule(isl_schedule_node* Node, void *U
   //std::vector<isl::schedule_node>* kernel_nodes = static_cast<std::vector<isl::schedule_node>*>(User);
   using namespace matchers;
   auto matcher = band(isKernel, any());
-   
+  
   if (ScheduleNodeMatcher::isMatching(matcher, isl::manage_copy(Node))) {
     //kernel_nodes->push_back(isl::manage_copy(Node));    
 
@@ -170,6 +181,31 @@ static isl_schedule_node* differentiateSchedule(isl_schedule_node* Node, void *U
      auto new_node =  insertKernelMarker.insertAt(cpp_node);
      isl_schedule_node_dump(new_node.get());
      return new_node.release();
+  }
+  
+  return Node;
+}
+
+static isl_schedule_node* standardMarker(isl_schedule_node* Node, void *User)
+{
+  Scop* S = static_cast<Scop*>(User);
+  using namespace matchers;
+  auto matcher = band(isKernel, any());
+  // hard: replace on sequence(filter(band()), filter(mark(band(any()))), filter(band()))
+  // easy: replace on filter(mark(band(any())))
+  
+  if (ScheduleNodeMatcher::isMatching(matcher, isl::manage_copy(Node))) {
+    // replace with builder
+    // at first we need to generate a payload for every type of the builder
+    isl_id* id = isl_id_alloc(S->mustWrites.get_ctx().get(),
+			      strAnnotation("xcl_array_partition", 1).c_str(), nullptr);
+    isl_id_dump(id);
+    using namespace builders;
+    auto insertKernelMarker = mark(id);
+    auto cpp_node = isl::manage(Node);
+    auto new_node =  insertKernelMarker.insertAt(cpp_node);
+    isl_schedule_node_dump(new_node.get());
+    return new_node.release();
   }
   
   return Node;
@@ -265,6 +301,81 @@ static isl_schedule_node* insertCopyForwardMarkNodes(isl_schedule_node* Node, vo
     return new_node.parent().parent().parent().release();
   }
   return Node;
+}
+
+static void generateCopySchedule(isl_schedule_node* node, TestContext* context)
+{
+  struct pet_array* pa = context->petScop_->arrays[0];
+ 
+  isl_multi_pw_aff *mpa;
+  isl_multi_union_pw_aff *mupa;
+ 
+  isl_space* space = isl_set_get_space(pa->extent);
+  space = isl_space_from_range(space);
+  space = isl_space_add_dims(space, isl_dim_in, 1);
+  space = isl_space_wrap(space);
+  space = isl_space_map_from_set(space);
+  isl_id* id = isl_id_alloc(context->ctx_, read ? "read" : "write", context);
+  space = isl_space_set_tuple_id(space, isl_dim_in, id);
+
+  isl_multi_aff *from_access = isl_multi_aff_identity(space);
+  printf("from_access\n");
+  isl_multi_aff_dump(from_access);
+
+  isl_map* from_access_map = isl_map_from_multi_aff(isl_multi_aff_copy(from_access));
+  printf("from access map\n");
+  isl_map_dump(from_access_map);
+
+  isl_union_map* from_access_union_map = isl_union_map_from_map(from_access_map);
+  printf("from access union map\n");
+  isl_union_map_dump(from_access_union_map);
+  
+  printf("space\n");
+  isl_space_dump(space);
+
+  isl_space* space2 = isl_space_domain(isl_multi_aff_get_space(from_access));
+
+  printf("space\n");
+  isl_space_dump(space2);
+
+  isl_union_map *access = isl_union_map_copy(context->s_->mustWrites.get());
+  //access = isl_union_map_preimage_range_multi_aff(access, from_access);
+  //printf("access\n");
+  isl_union_map_dump(access);
+  isl_union_set* filter = isl_union_set_empty(space2);
+  printf("filter\n");
+  isl_union_set_dump(filter);
+  filter = isl_union_set_apply(filter, isl_union_map_copy(access));
+  isl_union_set_dump(filter);
+  
+  space2 = isl_space_map_from_set(space2);
+  mpa = isl_multi_pw_aff_identity(space);
+  mpa = isl_multi_pw_aff_range_factor_range(mpa);
+  mupa = isl_multi_union_pw_aff_from_multi_pw_aff(mpa);
+
+  printf("mupa\n");
+  isl_multi_union_pw_aff_dump(mupa);
+
+  isl_union_set* domain = isl_union_map_domain(from_access_union_map);
+  printf("domain\n");
+  isl_union_set_dump(domain);
+  access = isl_union_set_wrapped_domain_map(domain);
+  printf("new access\n");
+  isl_union_map_dump(access);
+  access = isl_union_map_reverse(access);
+  printf("new access1\n");
+  isl_union_map_dump(access);
+  access = isl_union_map_coalesce(access);
+  printf("new access2\n");
+  isl_union_map_dump(access);
+
+  isl_schedule_node* graft = isl_schedule_node_from_extension(access);
+  graft = isl_schedule_node_child(graft, 0);
+  graft = isl_schedule_node_insert_partial_schedule(graft, mupa);
+  graft = isl_schedule_node_insert_filter(graft, filter);
+  printf("\ngraft node\n");
+  isl_schedule_node_dump(graft);
+  
 }
 
 /* totally copied from ppcg just to have hier also for additional check*/
@@ -369,6 +480,19 @@ static __isl_give isl_schedule_node *set_band_properties(
         return node;
 }
 
+/*static void annotateArraysAndKernel(TestContext* context)
+{
+  for (int i = 0; i < context->petScop_->n_array; i++) {
+    struct pet_array* pa = context->petScop_->arrays[i];
+    const char *array_name = isl_set_get_tuple_name(pa->extent);
+    std::string localName = "local_"+std::string(array_name);
+    std::string annotation = annotateStatement(localName, "xcl_array_partition", "cyclic", 256, 1); 
+  }
+  // suppose we have number of present kernels
+  for (int i = 0; i < kernelNumber; i++) {
+    //annotate
+  }
+  }*/
 void runAllFlow(std::string fileName, bool computeSchedule) {
 
   //implement function which parses matcher library 
@@ -376,6 +500,7 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
   //std::vector<ScheduleNodeMatcher> matchers;
   //parseMatcherLibrary(&matchers);
  
+  // if kernel is marked already once, we should not mark it as a kernel again
 
   std::vector<isl::schedule_node> kernel_nodes;
   Scop S = Parser(fileName).getScop();
@@ -430,6 +555,23 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
   node = isl_schedule_node_map_descendant_bottom_up(node, insertCopyBackForwardMarkNodes,
                                              (static_cast<void *>(context)));
   isl_schedule_node_dump(node);
+
+  node = isl_schedule_node_map_descendant_bottom_up(node, standardMarker,
+                                             (static_cast<void *>(&S)));
+  //annotateArraysAndKernel(context);
+  //auto newcpp = isl::manage(node);
+  //isl_schedule_node_dump(newcpp.child(0).child(0).child(0).child(0).get());
+  //generateCopySchedule(newcpp.copy(), context);
+  /* general flow for first test */
+  /* find for band(any())
+   * mark nodes with annotation
+   * print
+   */
+  // for example insert every array type with annotation
+  //for (int i = 0; i < N; i++) {
+  //  struct pet_array* pa = context->petScop_->arrays[i];
+  //}
+  // we should remember to mark our extrension nodes to transfer to device wuith different ddr banks
 }
 
 int main(int argc, char **argv) {
