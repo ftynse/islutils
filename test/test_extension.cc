@@ -358,7 +358,7 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
   //for (int i = 0; i < context->matched_nodes_.size(); i++) {
     
   std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyForward =
-    generateCopyScheduleClean(context, 0);
+    generateCopyScheduleClean(context, 1);
   std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyBackward =
     generateCopyScheduleClean(context, 0);
   
