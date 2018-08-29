@@ -85,16 +85,24 @@ isl::schedule_node ScheduleNodeBuilder::insertSingleChildTypeNodeAt(
     node = isl::manage(
         isl_schedule_node_insert_guard(node.release(), set_.copy()));
   } else if (current_ == isl_schedule_node_mark) {
-    node = isl::manage(
-        isl_schedule_node_insert_mark(node.release(), isl_id_copy(id_)));
+    node =
+        isl::manage(isl_schedule_node_insert_mark(node.release(), id_.copy()));
   } else if (current_ == isl_schedule_node_extension) {
-    isl_schedule_node *graft;
-    graft = isl_schedule_node_from_extension(umap_.copy());
-    node = direction_ ? isl::manage(isl_schedule_node_graft_before(node.release(), graft)) :
-                       isl::manage(isl_schedule_node_graft_after(node.release(), graft));
-    // be careful here, as this stuff returns pointer not to the extension node,
-    // to be at the extension node you should make node.parent().parent().parent()
-    // just leave default return value here
+    // There is no way to directly insert an extension node in isl.
+    // isl_schedule_node_graft_* functions insert an extension node followed by
+    // a sequence with two filters (one for the original domain points and
+    // another for the introduced points) and leave the node pointer at a leaf
+    // below the filter with the original domain points.  Go back to the
+    // introduced sequence node and remove it, letting any child subtree to be
+    // constructed as usual.
+    auto extensionRoot =
+        isl::manage(isl_schedule_node_from_extension(umap_.copy()));
+    node = isl::manage(isl_schedule_node_graft_before(node.release(),
+                                                      extensionRoot.release()))
+               .parent()
+               .parent();
+    node = node.cut();
+    node = node.parent();
   }
 
   if (children_.size() > 1) {
@@ -105,6 +113,71 @@ isl::schedule_node ScheduleNodeBuilder::insertSingleChildTypeNodeAt(
   // rather recurse to children, take what was returned and take its parent.
   return children_.empty() ? node
                            : children_.at(0).insertAt(node.child(0)).parent();
+}
+
+// Depth-first search through the tree, returning first match using vector as
+// optional (empty vector means no match).
+static std::vector<isl::schedule_node>
+dfsFirst(isl::schedule_node root,
+         std::function<bool(isl::schedule_node)> matcher) {
+  if (matcher(root)) {
+    return {root};
+  }
+
+  for (int i = 0, e = root.n_children(); i < e; ++i) {
+    root = root.child(i);
+    auto result = dfsFirst(root, matcher);
+    if (!result.empty()) {
+      return result;
+    }
+    root = root.parent();
+  }
+
+  return {};
+}
+
+// For a builder of expansion node, build a separate schedule tree starting at
+// this node as domain and than attach it to the original tree at a leaf
+// indicated by "node".
+// Contraty to isl_schedule_node_group, this method does not modify the nodes
+// on the way to root and therefore is insensitive to anchoring problems.
+isl::schedule_node
+ScheduleNodeBuilder::expandTree(isl::schedule_node node) const {
+  if (current_ != isl_schedule_node_expansion) {
+    assert(false && "only call expandTree on expansion builder");
+  }
+
+  // Construct the domain of the new subtree by applying the expansion map to
+  // the set of domain points active at the given leaf.
+  // note that .get_domain would not work for the "extended" parts of the tree
+  auto parentDomain = node.get_domain();
+  auto childDomain = parentDomain.apply(umap_);
+  auto childRoot = isl::schedule_node::from_domain(childDomain);
+  childRoot = children_.at(0).insertAt(childRoot.child(0)).parent();
+
+  // Insert a mark node so that we can find the position in the transformed
+  // tree (yes, this is quite ugly but seems to be the only way around CoW).
+  auto markBuilder = mark(
+      isl::id::alloc(node.get_ctx(), "__islutils_expand_builder", nullptr));
+  node = markBuilder.insertAt(node);
+
+  // Transform the entire schedule and find the corresponding location by
+  // DFS-lookup of the mark node.  Remove the mark node and return its child
+  // (the newly inserted expansion node) for continuation.
+  auto schedule = node.get_schedule();
+  schedule = isl::manage(isl_schedule_expand(
+      schedule.release(), upma_.copy(), childRoot.get_schedule().release()));
+  auto optionalNewNode =
+      dfsFirst(schedule.get_root(), [markBuilder](isl::schedule_node n) {
+        return isl_schedule_node_get_type(n.get()) == isl_schedule_node_mark &&
+               isl_schedule_node_mark_get_id(n.get()) == markBuilder.id_.get();
+      });
+  if (optionalNewNode.empty()) {
+    assert(false && "could not find mark node after expansion");
+  }
+  node = optionalNewNode.at(0);
+  node = isl::manage(isl_schedule_node_delete(node.release()));
+  return node;
 }
 
 // need to insert at child?
@@ -121,6 +194,8 @@ ScheduleNodeBuilder::insertAt(isl::schedule_node node) const {
   } else if (current_ == isl_schedule_node_sequence ||
              current_ == isl_schedule_node_set) {
     return insertSequenceOrSetAt(node, current_);
+  } else if (current_ == isl_schedule_node_expansion) {
+    return expandTree(node);
   } else if (current_ == isl_schedule_node_leaf) {
     // Leaf is a special type in isl that has no children, it gets added
     // automatically, i.e. there is no need to insert it. Builder with leaf
@@ -144,22 +219,6 @@ isl::schedule_node ScheduleNodeBuilder::build() const {
   }
   return insertAt(isl::schedule_node());
 }
-
-ScheduleNodeBuilder mark(isl_id* id) {
-  ScheduleNodeBuilder builder;
-  builder.current_ = isl_schedule_node_mark;
-  builder.id_ = id;
-  return builder;
-}
-
-ScheduleNodeBuilder extension(isl::union_map map, bool direction) {
-  ScheduleNodeBuilder builder;
-  builder.current_ = isl_schedule_node_extension;
-  builder.umap_ = map;
-  builder.direction_ = direction;
-  return builder;
-}
-
 
 ScheduleNodeBuilder domain(isl::union_set uset) {
   ScheduleNodeBuilder builder;
@@ -201,6 +260,78 @@ ScheduleNodeBuilder filter(isl::union_set uset, ScheduleNodeBuilder &&child) {
   return builder;
 }
 
+ScheduleNodeBuilder extension(isl::union_map umap) {
+  ScheduleNodeBuilder builder;
+  builder.current_ = isl_schedule_node_extension;
+  builder.umap_ = umap;
+  return builder;
+}
+
+ScheduleNodeBuilder extension(isl::union_map umap,
+                              ScheduleNodeBuilder &&child) {
+  auto builder = extension(umap);
+  builder.children_.emplace_back(child);
+  return builder;
+}
+
+ScheduleNodeBuilder expansion(isl::union_map umap) {
+  if (umap.is_identity()) {
+    assert(false && "dentity expansion map will not lead to an expansion node");
+  }
+
+  ScheduleNodeBuilder builder;
+  builder.current_ = isl_schedule_node_expansion;
+  builder.umap_ = umap;
+  builder.upma_ = isl::union_pw_multi_aff(umap.reverse());
+  return builder;
+}
+
+ScheduleNodeBuilder expansion(isl::union_map umap,
+                              ScheduleNodeBuilder &&child) {
+  auto builder = expansion(umap);
+  builder.children_.emplace_back(child);
+  return builder;
+}
+
+ScheduleNodeBuilder mark(isl::id id) {
+  ScheduleNodeBuilder builder;
+  builder.current_ = isl_schedule_node_mark;
+  builder.id_ = id;
+  return builder;
+}
+
+ScheduleNodeBuilder mark(isl::id id, ScheduleNodeBuilder &&child) {
+  auto builder = mark(id);
+  builder.children_.emplace_back(child);
+  return builder;
+}
+
+ScheduleNodeBuilder guard(isl::set set) {
+  ScheduleNodeBuilder builder;
+  builder.current_ = isl_schedule_node_guard;
+  builder.set_ = set;
+  return builder;
+}
+
+ScheduleNodeBuilder guard(isl::set set, ScheduleNodeBuilder &&child) {
+  auto builder = guard(set);
+  builder.children_.emplace_back(child);
+  return builder;
+}
+
+ScheduleNodeBuilder context(isl::set set) {
+  ScheduleNodeBuilder builder;
+  builder.current_ = isl_schedule_node_context;
+  builder.set_ = set;
+  return builder;
+}
+
+ScheduleNodeBuilder context(isl::set set, ScheduleNodeBuilder &&child) {
+  auto builder = context(set);
+  builder.children_.emplace_back(child);
+  return builder;
+}
+
 ScheduleNodeBuilder sequence(std::vector<ScheduleNodeBuilder> &&children) {
   ScheduleNodeBuilder builder;
   builder.current_ = isl_schedule_node_sequence;
@@ -231,13 +362,18 @@ ScheduleNodeBuilder subtree(isl::schedule_node node) {
   } else if (builder.current_ == isl_schedule_node_guard) {
     builder.set_ = isl::manage(isl_schedule_node_guard_get_guard(node.get()));
   } else if (builder.current_ == isl_schedule_node_mark) {
-    builder.id_ = isl_id_copy(isl_schedule_node_mark_get_id(node.get()));
+    builder.id_ = isl::manage(isl_schedule_node_mark_get_id(node.get()));
   } else if (builder.current_ == isl_schedule_node_band) {
     builder.mupa_ =
         isl::manage(isl_schedule_node_band_get_partial_schedule(node.get()));
   } else if (builder.current_ == isl_schedule_node_extension) {
     builder.umap_ =
         isl::manage(isl_schedule_node_extension_get_extension(node.get()));
+  } else if (builder.current_ == isl_schedule_node_expansion) {
+    builder.umap_ =
+        isl::manage(isl_schedule_node_expansion_get_expansion(node.get()));
+    builder.upma_ =
+        isl::manage(isl_schedule_node_expansion_get_contraction(node.get()));
   } else if (builder.current_ == isl_schedule_node_sequence ||
              builder.current_ == isl_schedule_node_set ||
              builder.current_ == isl_schedule_node_leaf) {
