@@ -13,7 +13,7 @@ public:
   pet_scop* petScop_;
   std::string fileName_;
   isl_ctx* ctx_;
-  std::vector<isl_schedule_node*> matched_nodes_;
+  int matched_nodes_;
 
   // for host/kernel purpose special flag
   // the vector is supposed to contain all currently matched nodes
@@ -73,7 +73,7 @@ class Statement {
   std::string name;
   
   std::string toString() {
-    
+    return "true";
   }
   //no idea what it should be currently
 };

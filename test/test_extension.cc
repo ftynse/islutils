@@ -90,7 +90,7 @@ static void compute_flow_dep(struct Scop *S)
 {
   isl_union_access_info *access;
   isl_union_flow *flow; 
-  isl_union_map *kills, *must_writes;
+  isl_union_map *must_writes;
 
   access = isl_union_access_info_from_sink(isl_union_map_copy(S->reads.get()));
   must_writes = isl_union_map_copy(S->mustWrites.get());
@@ -161,30 +161,7 @@ bool isKernel(isl::schedule_node node)
       isl_schedule_node_band_member_get_coincident(node.get(), 0)) {
     return true;
   }
-}
-
-static isl_schedule_node* differentiateSchedule(isl_schedule_node* Node, void *User)
-{
-
-  TestContext* context = static_cast<TestContext*>(User);
-  //std::vector<isl::schedule_node>* kernel_nodes = static_cast<std::vector<isl::schedule_node>*>(User);
-  using namespace matchers;
-  auto matcher = band(isKernel, any());
-  
-  if (ScheduleNodeMatcher::isMatching(matcher, isl::manage_copy(Node))) {
-    //kernel_nodes->push_back(isl::manage_copy(Node));    
-
-     isl_id* id = isl_id_alloc(context->ctx_, "kernel code", nullptr);
-     using namespace builders;
-     auto insertKernelMarker = mark(id);
-     auto cpp_node = isl::manage(Node);
-     auto new_node =  insertKernelMarker.insertAt(cpp_node);
-     context->matched_nodes_.push_back(isl_schedule_node_copy(new_node.get()));
-     //isl_schedule_node_dump(new_node.get());
-     return new_node.release();
-  }
-  
-  return Node;
+  return false;
 }
 
 static isl_schedule_node* standardMarker(isl_schedule_node* Node, void *User)
@@ -200,9 +177,9 @@ static isl_schedule_node* standardMarker(isl_schedule_node* Node, void *User)
     // at first we need to generate a payload for every type of the builder
     isl_id* id = isl_id_alloc(S->mustWrites.get_ctx().get(),
 			      strAnnotation("xcl_array_partition", 1).c_str(), nullptr);
-    isl_id_dump(id);
+    isl::id cppId = isl::manage(id);
     using namespace builders;
-    auto insertKernelMarker = mark(id);
+    auto insertKernelMarker = mark(cppId);
     auto cpp_node = isl::manage(Node);
     auto new_node =  insertKernelMarker.insertAt(cpp_node);
     isl_schedule_node_dump(new_node.get());
@@ -260,50 +237,6 @@ static isl_union_map* createCopyNode(bool direction, isl_union_set* setCopy, isl
   
   return extension; 
 }
-
-static isl_schedule_node* insertCopyBackForwardMarkNodes(isl_schedule_node* Node, void* User)
-{
-  if (isl_schedule_node_get_type(Node) == isl_schedule_node_mark) {
-    
-    //create graft node at first
-    TestContext* context = static_cast<TestContext*>(User);
-    isl_union_set* setCopy = isl_union_map_range(context->s_->reads.copy());
-    
-    isl_union_map* extensionForwardNode = createCopyNode(1, setCopy, isl_schedule_node_copy(Node), context); 
-    isl_union_map* extensionBackwardNode = createCopyNode(0, setCopy, isl_schedule_node_copy(Node), context);
-    using namespace builders;
-    auto cpp_node = isl::manage(Node);
-
-    auto insertCopyForwardNode = extension(isl::manage(extensionForwardNode), 1);
-    auto new_node =  insertCopyForwardNode.insertAt(cpp_node);
-    auto insertCopyBackwardNode = extension(isl::manage(extensionBackwardNode), 0);
-    auto new_node_2 = insertCopyBackwardNode.insertAt(new_node); 
-
-    return new_node_2.parent().parent().parent().release();
-  }
-  return Node;
-}
-
-static isl_schedule_node* insertCopyForwardMarkNodes(isl_schedule_node* Node, void* User)
-{
-  if (isl_schedule_node_get_type(Node) == isl_schedule_node_mark) {
-
-    //create graft node at first
-    TestContext* context = static_cast<TestContext*>(User);
-    isl_union_set* setCopy = isl_union_map_range(context->s_->reads.copy());
-
-    isl_union_map* extensionForwardNode = createCopyNode(1, setCopy, isl_schedule_node_copy(Node), context);
-    using namespace builders;
-    auto cpp_node = isl::manage(Node);
-
-    auto insertCopyForwardNode = extension(isl::manage(extensionForwardNode), 1);
-    auto new_node =  insertCopyForwardNode.insertAt(cpp_node);
-
-    return new_node.parent().parent().parent().release();
-  }
-  return Node;
-}
-
 
 static  std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>
 generateCopyScheduleClean(TestContext* context, bool forward)
@@ -368,7 +301,7 @@ generateCopyScheduleClean(TestContext* context, bool forward)
   }
   }*/
 
-static void transform(isl_schedule_node* node, TestContext* context)
+static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext* context)
 {
   //1) Match and transform for kernel code
   
@@ -407,16 +340,6 @@ static void transform(isl_schedule_node* node, TestContext* context)
   //        leaf())
   //   )
   // )
-
-  // assert node type is domain type
-
-  // 1) get all nodes we want to modify
-  
-  node = isl_schedule_node_map_descendant_bottom_up(node, differentiateSchedule,
-                                              (static_cast<void *>(context)));
-  // construct annotations to insert
-  // we don't need a special structure for kernel
-  // maybe we need just set a "kernel"+number
   
   // matched nodes point to marker nodes
 
@@ -429,99 +352,119 @@ static void transform(isl_schedule_node* node, TestContext* context)
   isl_union_set* arraysToTransfer = isl_union_set_list_union(isl_union_set_list_copy(listToTransfer));
   arraysToTransfer = isl_union_set_detect_equalities(arraysToTransfer);
 
-  isl_union_set_dump(arraysToTransfer);
-  // 3) Iterate through all found nodes
-  for (int i = 0; i < 1; i++) {
-    printf("MATCHED NODE\n");
-    isl_schedule_node_dump(context->matched_nodes_.at(i));
+  //for (int i = 0; i < context->matched_nodes_.size(); i++) {
     
     // generate annotations
-    annotateStatement("kernel" + toString(i), "reqd_work_group_size", 1, 1, 1);
-    annotateStatement("extension", "xcl_array_partition", "cyclic", 2, 1);
-    annotateStatement("band1", "xcl_pipeline_loop");
-    annotateStatement("band2", "xcl_pipeline_loop");
-    annotateStatement("band3", "xcl_pipeline_loop");
-    std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyForward =
-      generateCopyScheduleClean(context, 1);
-    std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyBackward =
-      generateCopyScheduleClean(context, 0);
-
-    //isl_union_map_union();
+  annotateStatement("kernel" + toString(i), "reqd_work_group_size", 1, 1, 1);
+  annotateStatement("extension" + toString(i), "xcl_array_partition", "cyclic", 8, 1);
+  annotateStatement("band" + toString(i), "xcl_pipeline_loop");
+  std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyForward =
+    generateCopyScheduleClean(context, 1);
+  std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyBackward =
+    generateCopyScheduleClean(context, 0);
     
-    isl_union_map* transferForward = createCopyNode(1, arraysToTransfer,isl_schedule_node_copy(context->matched_nodes_.at(i)), context);
-    isl_union_map* transferBackward = createCopyNode(0, arraysToTransfer, isl_schedule_node_copy(context->matched_nodes_.at(i)), context);
-    isl_union_set* transferForwardFilter = isl_union_map_range(isl_union_map_copy(transferForward));
-    isl_union_set* transferBackwardFilter = isl_union_map_range(isl_union_map_copy(transferBackward));
+  isl_union_map* transferForward = createCopyNode(1, arraysToTransfer,isl_schedule_node_copy(node), context);
+  isl_union_map* transferBackward = createCopyNode(0, arraysToTransfer, isl_schedule_node_copy(node), context);
+  isl_union_set* transferForwardFilter = isl_union_map_range(isl_union_map_copy(transferForward));
+  isl_union_set* transferBackwardFilter = isl_union_map_range(isl_union_map_copy(transferBackward));
 
+  isl_union_map* unionTransfer = isl_union_map_union(transferForward, transferBackward);
     
+  isl_union_map* unionCopy = isl_union_map_union(std::get<0>(forCopyForward), std::get<0>(forCopyBackward));
 
-    isl_union_map* unionTransfer = isl_union_map_union(transferForward, transferBackward);
-    isl_union_map_dump(unionTransfer);
+  isl_union_map* unionExtension = isl_union_map_union(unionTransfer, unionCopy);
 
-    
-    isl_union_map* unionCopy = isl_union_map_union(std::get<0>(forCopyForward), std::get<0>(forCopyBackward));
-    isl_union_map_dump(unionCopy);
+  isl_schedule_node* previousFilterNode = isl_schedule_node_parent(isl_schedule_node_copy(node));
+  isl::schedule_node cppPreviousFilterNode = isl::manage(previousFilterNode);
+  isl_union_set* previousFilter = isl_schedule_node_filter_get_filter(isl_schedule_node_copy(previousFilterNode));
 
-    isl_schedule_node* previousFilterNode = isl_schedule_node_parent(isl_schedule_node_copy(context->matched_nodes_.at(i)));
-    printf("%i\n", isl_schedule_node_get_type(previousFilterNode));
-    isl_union_set* previousFilter = isl_schedule_node_filter_get_filter(isl_schedule_node_copy(previousFilterNode));
+  isl_schedule_node* previousBandNode = isl_schedule_node_child(isl_schedule_node_copy(node), 0);
+  isl_multi_union_pw_aff* previousBandNodeSchedule = isl_schedule_node_get_prefix_schedule_multi_union_pw_aff(previousBandNode);
 
-    isl_schedule_node* previousBandNode = isl_schedule_node_child(isl_schedule_node_copy(context->matched_nodes_.at(i)), 0);
-    isl_multi_union_pw_aff* previousBandNodeSchedule = isl_schedule_node_get_prefix_schedule_multi_union_pw_aff(previousBandNode);
+  /*   create cpp objects */
+  isl::union_map cppUnionTransfer = isl::manage(isl_union_map_copy(unionTransfer));
+  isl::union_set cppTransferForwardFilter = isl::manage(isl_union_set_copy(transferForwardFilter));
+  isl::union_set cppPreviousFilter = isl::manage(isl_union_set_copy(previousFilter));
+  isl::union_map cppUnionCopy = isl::manage(isl_union_map_copy(unionCopy));
 
+  isl::union_set cppCopyForward1 = isl::manage(isl_union_set_copy(std::get<1>(forCopyForward)));
+  isl::multi_union_pw_aff cppCopyForward2 = isl::manage(isl_multi_union_pw_aff_copy(std::get<2>(forCopyForward)));
 
-    /*   create cpp objects */
-    isl::union_map cppUnionTransfer = isl::manage(unionTransfer);
-    isl::union_set cppTransferForwardFilter = isl::manage(transferForwardFilter);
-    isl::union_set cppPreviousFilter = isl::manage(previousFilter);
-    isl::union_map cppUnionCopy = isl::manage(unionCopy);
+  isl::union_set cppPreviousFilter2 = isl::manage(isl_union_set_copy(previousFilter));
+  isl::multi_union_pw_aff cppPreviousBandNodeSchedule = isl::manage(isl_multi_union_pw_aff_copy(previousBandNodeSchedule));
 
-    isl::union_set cppCopyForward1 = isl::manage(std::get<1>(forCopyForward));
-    isl::multi_union_pw_aff cppCopyForward2 = isl::manage(std::get<2>(forCopyForward));
+  isl::union_set cppCopyBackward1 = isl::manage(isl_union_set_copy(std::get<1>(forCopyBackward)));
+  isl::multi_union_pw_aff cppCopyBackward2 = isl::manage(isl_multi_union_pw_aff_copy(std::get<2>(forCopyBackward)));
 
-    isl::union_set cppPreviousFilter2 = isl::manage(previousFilter);
-    isl::multi_union_pw_aff cppPreviousBandNodeSchedule = isl::manage(previousBandNodeSchedule);
+  isl::union_set cppTransferBackwardFilter = isl::manage(isl_union_set_copy(transferBackwardFilter));
 
-    isl::union_set cppCopyBackward1 = isl::manage(std::get<1>(forCopyBackward));
-    isl::multi_union_pw_aff cppCopyBackward2 = isl::manage(std::get<2>(forCopyBackward));
+  isl::union_map cppUnionExtension = isl::manage(isl_union_map_copy(unionExtension));
 
-    isl::union_set cppTransferBackwardFilter = isl::manage(transferBackwardFilter);
-    
-    
-    using namespace builders;
-    auto builder = extension(cppUnionTransfer,
+  isl_id* id = isl_id_alloc(context->ctx_, "kernel code", nullptr);
+  isl::id cppId= isl::manage(id);
+       
+  using namespace builders;
+  auto builder = mark(cppId,
+		    extension(cppUnionExtension,
 		     sequence(
 		       filter(cppTransferForwardFilter),
 		       filter(cppPreviousFilter,
-			 extension(cppUnionCopy,
-		       	   sequence(
-			     filter(cppCopyForward1,
-		       	       band(cppCopyForward2
-		       	       )
-		       	     ),
-		             filter(cppPreviousFilter2,
-			       band(cppPreviousBandNodeSchedule
-                               )
-			     ),
-			     filter(cppCopyBackward1,
-			       band(cppCopyBackward2
-			       )
-                             )
+		       	 sequence(
+			   filter(cppCopyForward1,
+		       	     band(cppCopyForward2
+		       	     )
+		       	   ),
+			   subtree(cppPreviousFilterNode),
+			   filter(cppCopyBackward1,
+			     band(cppCopyBackward2
+			     )
                            )
 		         )
 		       ),
 		       filter(cppTransferBackwardFilter)
 		     )
-		   );
+		   )
+		 );
     
     
-      //isl_schedule_node* after_cut = isl_schedule_node_cut(context->matched_nodes_.at(i));
-      //isl_schedule_node_dump(after_cut);
-    //root = transformedBuilder.insertAt(root);
-    //root = root.parent();
-    
-    }
+  isl_schedule_node* after_cut = isl_schedule_node_cut(node/*context->matched_nodes_.at(i)*/);
+  isl::schedule_node cpp_after_cut = isl::manage(after_cut);
+  cpp_after_cut = builder.insertAt(cpp_after_cut);
+  isl_schedule_node_dump(cpp_after_cut.get());
+
+  return cpp_after_cut;
 }
+
+
+static isl_schedule_node* differentiateSchedule(isl_schedule_node* Node, void *User)
+{
+
+  TestContext* context = static_cast<TestContext*>(User);
+  //std::vector<isl::schedule_node>* kernel_nodes = static_cast<std::vector<isl::schedule_node>*>(User);
+  using namespace matchers;
+  auto matcher = band(isKernel, any());
+  
+  if (ScheduleNodeMatcher::isMatching(matcher, isl::manage_copy(Node))) {
+    //kernel_nodes->push_back(isl::manage_copy(Node));    
+
+    // isl_id* id = isl_id_alloc(context->ctx_, "kernel code", nullptr);
+    // isl::id cppId= isl::manage(id);
+    // using namespace builders;
+    // auto insertKernelMarker = mark(cppId);
+    // auto cpp_node = isl::manage(Node);
+    // auto new_node =  insertKernelMarker.insertAt(cpp_node);
+
+    // modify everything here
+    isl::schedule_node new_node = transform(++context->matched_nodes_, isl_schedule_node_copy(Node), context);
+    return new_node.release();
+    //context->matched_nodes_.push_back(isl_schedule_node_copy(Node));
+     //isl_schedule_node_dump(new_node.get());
+     // return new_node.release();
+  }
+  
+  return Node;
+}
+
 void runAllFlow(std::string fileName, bool computeSchedule) {
 
   //implement function which parses matcher library 
@@ -571,29 +514,14 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
 
   sc = compute_schedule_constraints(sc, validity, coincidence, dep_raw, dep, proximity, &S);
   new_schedule = isl_schedule_constraints_compute_schedule(sc);
-
-    //} else {
-    /* determine properties of original schedule */
-    // new_schedule = isl_schedule_copy(S.schedule.get());
-    //  sc = compute_schedule_constraints(sc, validity, coincidence, dep_raw, dep, proximity, &S);
-    // new_schedule = isl_schedule_map_schedule_node_bottom_up(new_schedule,
-    //                                           &set_band_properties, sc);
   
-  // printf("\ndump new schedule\n\n"); 
   isl_schedule_node* node = isl_schedule_get_root(new_schedule);
-  //isl_schedule_node_dump(node);
 
-  //node = isl_schedule_node_map_descendant_bottom_up(node, differentiateSchedule,
-  //                                           (static_cast<void *>(&S)));  
-  //printf("vector length %i\n", kernel_nodes.size());
-
-  //printf("\ndump_schedule_with_mark_nodes\n");
-  //isl_schedule_node_dump(node);
-
-  transform(node, context);
+  /* temporal solution to track number of kernels */
   
-  /* try to insert smth before mark node */
-  printf("try to find mark nodes\n");
+  context->matched_nodes_ = 0;
+  node = isl_schedule_node_map_descendant_bottom_up(node, differentiateSchedule,
+                                             (static_cast<void *>(context)));  
 
   //node = isl_schedule_node_map_descendant_bottom_up(node, insertCopyBackForwardMarkNodes,
   //                                            (static_cast<void *>(context)));
@@ -601,33 +529,12 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
 
   ///node = isl_schedule_node_map_descendant_bottom_up(node, standardMarker,
   //                                           (static_cast<void *>(&S)));
-  //annotateArraysAndKernel(context);
-  //auto newcpp = isl::manage(node).child(0);
-  //isl_schedule_node_dump(newcpp.get());
-  // generateCopyScheduleClean(newcpp.copy(), context);
-  /* general flow for first test */
-  /* find for band(any())
-   * mark nodes with annotation
-   * print
-   */
+
   // for example insert every array type with annotation
   //for (int i = 0; i < N; i++) {
   //  struct pet_array* pa = context->petScop_->arrays[i];
   //}
   // we should remember to mark our extrension nodes to transfer to device wuith different ddr banks
-  /*isl_union_set* set1 = isl_union_set_read_from_str(context->ctx_, "{ read[[] -> A[i0, i1]] : (i0 > 0 and i1 >= i0 and i1 <= 399) or (i0 >= 0 and i1 > i0 and i1 <= 398) or (i0 >= 0 and i1 > i0 and i1 <= 399) or (i0 <= 399 and i1 > 0 and i1 < i0) or (i0 <= 399 and i1 >= 0 and i1 <= -2 + i0) or (i0 <= 399 and i1 >= 0 and i1 < i0) or (i0 <= 399 and i1 >= 0 and i1 < i0) or (i1 = i0 and i0 >= 0 and i0 <= 398) }");
-  set1 = isl_union_set_coalesce(set1);
-  isl_union_set_dump(set1);
-  
-  isl_union_set* set2 = isl_union_set_read_from_str(context->ctx_, "{ read[[] -> A[i0, i1]] : (i0 >= 0 and i1 > i0 and i1 <= 398) or (i0 <= 399 and i1 > 0 and i1 < i0) or (i0 <= 399 and i1 >= 0 and i1 <= -2 + i0) or (i0 <= 399 and i1 >= 0 and i1 < i0) or (i1 = i0 and i0 >= 0 and i0 <= 398) or (i0 > 0 and i1 >= i0 and i1 <= 399) or (i0 >= 0 and i1 > i0 and i1 <= 399) or (i0 <= 399 and i1 >= 0 and i1 < i0) }");
-  set2 = isl_union_set_coalesce(set2);
-  isl_union_set_dump(set2);
-  printf("%i\n", isl_union_set_is_equal(set1, set2));
-
-  isl_union_map* map1 = isl_union_map_read_from_str(context->ctx_, "{ [] -> read[[] -> A[o0, o1]] : (o0 >= 0 and o1 > o0 and o1 <= 398) or (o0 <= 399 and o1 > 0 and o1 < o0) or (o0 <= 399 and o1 >= 0 and o1 <= -2 + o0) or (o0 <= 399 and o1 >= 0 and o1 < o0) or (o1 = o0 and o0 >= 0 and o0 <= 398) or (o0 > 0 and o1 >= o0 and o1 <= 399) or (o0 >= 0 and o1 > o0 and o1 <= 399) or (o0 <= 399 and o1 >= 0 and o1 < o0) }");
-  isl_union_map* map2 = isl_union_map_read_from_str(context->ctx_, "{ [] -> read[[] -> A[o0, o1]] : o0 >= 0 and o1 <= 399 and o0 <= 399 and o1 >= 0 }");
-  printf("result 2 : %i\n", isl_union_map_is_equal(map1, map2));*/
-  
 }
 
 int main(int argc, char **argv) {
