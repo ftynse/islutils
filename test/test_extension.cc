@@ -241,6 +241,8 @@ static isl_union_map* createCopyNode(bool direction, isl_union_set* setCopy, isl
 static  std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>
 generateCopyScheduleClean(TestContext* context, bool forward)
 {
+  // TODO add ability to copy as many arrays as possible
+  // or always match for exact number of arrays
   struct pet_array* pa = context->petScop_->arrays[0];
   isl_multi_pw_aff *mpa;
   isl_multi_union_pw_aff *mupa;
@@ -344,6 +346,7 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
   // matched nodes point to marker nodes
 
   // 2) Determine the list of what we want to copy
+  annotateStatement("kernel(" + toString(i)+")", "reqd_work_group_size", 1, 1, 1);
   isl_union_set_list* listToTransfer = isl_union_set_list_alloc(context->ctx_, 0);
   isl_union_set* readSet = isl_union_map_range(isl_union_map_copy(context->s_->reads.copy()));
   isl_union_set* writeSet = isl_union_map_range(isl_union_map_copy(context->s_->mayWrites.copy()));
@@ -354,10 +357,10 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
 
   //for (int i = 0; i < context->matched_nodes_.size(); i++) {
     
-    // generate annotations
-  annotateStatement("kernel(" + toString(i)+")", "reqd_work_group_size", 1, 1, 1);
-  std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyForward =
-    generateCopyScheduleClean(context, 1);
+  std::vector<std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>> forCopyForward;
+  std::vector<std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>> forCopyBackward;
+  generateCopyScheduleClean(context, 1, &forCopyForward);
+  generateCopyScheduleClean
   std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyBackward =
     generateCopyScheduleClean(context, 0);
   
