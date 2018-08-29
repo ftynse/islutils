@@ -2,6 +2,7 @@
 #define TEST_EXTENSION_H
 #include <islutils/scop.h>
 #include "pet.h"
+#include <vector>
 #include <unordered_map>
 #include <sstream>
 typedef std::string matchers_annotations;
@@ -12,7 +13,10 @@ public:
   pet_scop* petScop_;
   std::string fileName_;
   isl_ctx* ctx_;
+  std::vector<isl_schedule_node*> matched_nodes_;
 
+  // for host/kernel purpose special flag
+  // the vector is supposed to contain all currently matched nodes
   // kernel1 -> <...>
   // local_A -> <...>
   //std::unordered_multimap<std::string, std::string> annotationMap;
@@ -75,4 +79,5 @@ class Statement {
 };
 
 std::unordered_multimap<std::string, std::string> annotationMap;
+
 #endif TEST_EXTENSION_H
