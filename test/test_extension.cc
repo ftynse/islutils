@@ -357,10 +357,8 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
 
   //for (int i = 0; i < context->matched_nodes_.size(); i++) {
     
-  std::vector<std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>> forCopyForward;
-  std::vector<std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>> forCopyBackward;
-  generateCopyScheduleClean(context, 1, &forCopyForward);
-  generateCopyScheduleClean
+  std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyForward =
+    generateCopyScheduleClean(context, 0);
   std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyBackward =
     generateCopyScheduleClean(context, 0);
   
@@ -386,6 +384,9 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
   isl_multi_union_pw_aff* previousBandNodeSchedule = isl_schedule_node_get_prefix_schedule_multi_union_pw_aff(previousBandNode);
   annotateStatement(toString(isl_multi_union_pw_aff_to_str(previousBandNodeSchedule)), "xcl_pipeline_loop");
 
+  isl_union_set* unionFilter = isl_union_set_union(isl_union_set_copy(previousFilter), isl_union_set_copy(std::get<1>(forCopyForward)));
+  unionFilter = isl_union_set_union(unionFilter, isl_union_set_copy(std::get<1>(forCopyBackward)));
+
   /*   create cpp objects */
   isl::union_map cppUnionTransfer = isl::manage(isl_union_map_copy(unionTransfer));
   isl::union_set cppTransferForwardFilter = isl::manage(isl_union_set_copy(transferForwardFilter));
@@ -404,6 +405,7 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
   isl::union_set cppTransferBackwardFilter = isl::manage(isl_union_set_copy(transferBackwardFilter));
 
   isl::union_map cppUnionExtension = isl::manage(isl_union_map_copy(unionExtension));
+  isl::union_set cppUnionFilter = isl::manage(isl_union_set_copy(unionFilter));
 
   std::string kernelName("kernel("+toString(1)+")");
   isl_id* id = isl_id_alloc(context->ctx_, kernelName.c_str(), nullptr);
@@ -414,7 +416,7 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
 		    extension(cppUnionExtension,
 		     sequence(
 		       filter(cppTransferForwardFilter),
-		       filter(cppPreviousFilter,
+		       filter(cppUnionFilter,
 		       	 sequence(
 			   filter(cppCopyForward1,
 		       	     band(cppCopyForward2
