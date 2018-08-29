@@ -15,10 +15,6 @@ public:
   isl_ctx* ctx_;
   int matched_nodes_;
 
-  // for host/kernel purpose special flag
-  // the vector is supposed to contain all currently matched nodes
-  // kernel1 -> <...>
-  // local_A -> <...>
   //std::unordered_multimap<std::string, std::string> annotationMap;
   
   TestContext(Scop* s, pet_scop* petScop, std::string fileName, isl_ctx* ctx)

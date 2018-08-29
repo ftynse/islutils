@@ -355,13 +355,14 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
   //for (int i = 0; i < context->matched_nodes_.size(); i++) {
     
     // generate annotations
-  annotateStatement("kernel" + toString(i), "reqd_work_group_size", 1, 1, 1);
-  annotateStatement("extension" + toString(i), "xcl_array_partition", "cyclic", 8, 1);
-  annotateStatement("band" + toString(i), "xcl_pipeline_loop");
+  annotateStatement("kernel(" + toString(i)+")", "reqd_work_group_size", 1, 1, 1);
   std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyForward =
     generateCopyScheduleClean(context, 1);
   std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyBackward =
     generateCopyScheduleClean(context, 0);
+  
+  annotateStatement(toString(isl_multi_union_pw_aff_to_str(std::get<2>(forCopyForward))), "xcl_pipeline_loop");
+  annotateStatement(toString(isl_multi_union_pw_aff_to_str(std::get<2>(forCopyBackward))), "xcl_pipeline_loop");
     
   isl_union_map* transferForward = createCopyNode(1, arraysToTransfer,isl_schedule_node_copy(node), context);
   isl_union_map* transferBackward = createCopyNode(0, arraysToTransfer, isl_schedule_node_copy(node), context);
@@ -380,6 +381,7 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
 
   isl_schedule_node* previousBandNode = isl_schedule_node_child(isl_schedule_node_copy(node), 0);
   isl_multi_union_pw_aff* previousBandNodeSchedule = isl_schedule_node_get_prefix_schedule_multi_union_pw_aff(previousBandNode);
+  annotateStatement(toString(isl_multi_union_pw_aff_to_str(previousBandNodeSchedule)), "xcl_pipeline_loop");
 
   /*   create cpp objects */
   isl::union_map cppUnionTransfer = isl::manage(isl_union_map_copy(unionTransfer));
@@ -400,7 +402,8 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
 
   isl::union_map cppUnionExtension = isl::manage(isl_union_map_copy(unionExtension));
 
-  isl_id* id = isl_id_alloc(context->ctx_, "kernel code", nullptr);
+  std::string kernelName("kernel("+toString(1)+")");
+  isl_id* id = isl_id_alloc(context->ctx_, kernelName.c_str(), nullptr);
   isl::id cppId= isl::manage(id);
        
   using namespace builders;
@@ -427,10 +430,9 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
 		 );
     
     
-  isl_schedule_node* after_cut = isl_schedule_node_cut(node/*context->matched_nodes_.at(i)*/);
+  isl_schedule_node* after_cut = isl_schedule_node_cut(node);
   isl::schedule_node cpp_after_cut = isl::manage(after_cut);
   cpp_after_cut = builder.insertAt(cpp_after_cut);
-  isl_schedule_node_dump(cpp_after_cut.get());
 
   return cpp_after_cut;
 }
@@ -521,7 +523,14 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
   
   context->matched_nodes_ = 0;
   node = isl_schedule_node_map_descendant_bottom_up(node, differentiateSchedule,
-                                             (static_cast<void *>(context)));  
+                                             (static_cast<void *>(context)));
+  isl_schedule_node_dump(node);
+  printf("\n\n##ANNOTATIONS##\n\n");
+  for(auto it = annotationMap.cbegin(); it != annotationMap.cend(); ++it)
+  {
+    std::cout << it->second<<std::endl;
+    std::cout << "\t"<<it->first << std::endl;
+  }
 
   //node = isl_schedule_node_map_descendant_bottom_up(node, insertCopyBackForwardMarkNodes,
   //                                            (static_cast<void *>(context)));
