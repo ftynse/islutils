@@ -91,7 +91,7 @@ ScheduleNodeBuilder set(std::vector<ScheduleNodeBuilder> &&children);
 ScheduleNodeBuilder subtree(isl::schedule_node node);
 
 template <typename T>
-std::vector<ScheduleNodeBuilder> func(T t) {
+std::vector<ScheduleNodeBuilder> sequenceTransform(T t) {
   return {t};
 }
 
@@ -100,16 +100,16 @@ std::vector<ScheduleNodeBuilder> sequenceTransform(T t, Args... args)
 {
 
    if (sizeof...(args) == 0) {
-     return func(t);
+     return sequenceTransform(t);
    }
-   std::vector<ScheduleNodeBuilder> vv = func(args...);
+   std::vector<ScheduleNodeBuilder> vv = sequenceTransform(args...);
    std::vector<ScheduleNodeBuilder> vv2 = {t};
    vv2.insert(std::end(vv2), std::begin(vv), std::end(vv));;
    return vv2;
 }
 
 template<class ...Args>
-ScheduleNodeBuilder sequenceMix(Args... args) {
+ScheduleNodeBuilder sequence(Args... args) {
   std::vector<ScheduleNodeBuilder> children = sequenceTransform(args...);
   ScheduleNodeBuilder builder;
   builder.current_ = isl_schedule_node_sequence;

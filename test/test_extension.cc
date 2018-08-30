@@ -239,11 +239,11 @@ static isl_union_map* createCopyNode(bool direction, isl_union_set* setCopy, isl
 }
 
 static  std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>
-generateCopyScheduleClean(TestContext* context, bool forward)
+generateCopyScheduleClean(TestContext* context, bool forward, int array_num)
 {
   // TODO add ability to copy as many arrays as possible
   // or always match for exact number of arrays
-  struct pet_array* pa = context->petScop_->arrays[0];
+  struct pet_array* pa = context->petScop_->arrays[array_num];
   isl_multi_pw_aff *mpa;
   isl_multi_union_pw_aff *mupa;
   
@@ -342,8 +342,6 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
   //        leaf())
   //   )
   // )
-  
-  // matched nodes point to marker nodes
 
   // 2) Determine the list of what we want to copy
   isl_union_set_list* listToTransfer = isl_union_set_list_alloc(context->ctx_, 0);
@@ -354,25 +352,37 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
   isl_union_set* arraysToTransfer = isl_union_set_list_union(isl_union_set_list_copy(listToTransfer));
   arraysToTransfer = isl_union_set_detect_equalities(arraysToTransfer);
 
-  //for (int i = 0; i < context->matched_nodes_.size(); i++) {
+  /* in this example we copy everything, but don't know the number of arrays,
+     so we have arrays for forward and backward copies */
+  std::vector<std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>> forCopyForwardVector;
+  std::vector<std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>> forCopyBackwardVector;
 
-  // seems for now we will just 
-  std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyForward =
-    generateCopyScheduleClean(context, 1);
-  std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*> forCopyBackward =
-    generateCopyScheduleClean(context, 0);
-    
+  /* we need to union all extensions in one extension node */ 
+  std::vector<isl_union_map*> extensionsArray;
+
+  int problem_size = context->petScop_->n_array;
+  for (int i = 0; i < problem_size; i++) {
+    forCopyForwardVector.push_back(generateCopyScheduleClean(context, 1, i));
+    forCopyBackwardVector.push_back(generateCopyScheduleClean(context, 0, i));
+    extensionsArray.push_back(std::get<0>(forCopyForwardVector.at(i)));
+    extensionsArray.push_back(std::get<0>(forCopyBackwardVector.at(i)));
+  }
+
+  /* transfer from and to device */
   isl_union_map* transferForward = createCopyNode(1, arraysToTransfer,isl_schedule_node_copy(node), context);
   isl_union_map* transferBackward = createCopyNode(0, arraysToTransfer, isl_schedule_node_copy(node), context);
   isl_union_set* transferForwardFilter = isl_union_map_range(isl_union_map_copy(transferForward));
   isl_union_set* transferBackwardFilter = isl_union_map_range(isl_union_map_copy(transferBackward));
-
   isl_union_map* unionTransfer = isl_union_map_union(transferForward, transferBackward);
-    
-  isl_union_map* unionCopy = isl_union_map_union(std::get<0>(forCopyForward), std::get<0>(forCopyBackward));
 
+  /* union all extensions */ 
+  isl_union_map* unionCopy = extensionsArray.at(0);
+  for (int i = 1; i < problem_size; i++) {
+    unionCopy = isl_union_map_union(unionCopy, extensionsArray.at(i));
+  }
   isl_union_map* unionExtension = isl_union_map_union(unionTransfer, unionCopy);
 
+  /* collect previous info about band node */
   isl_schedule_node* previousFilterNode = isl_schedule_node_parent(isl_schedule_node_copy(node));
   isl::schedule_node cppPreviousFilterNode = isl::manage(previousFilterNode);
   isl_union_set* previousFilter = isl_schedule_node_filter_get_filter(isl_schedule_node_copy(previousFilterNode));
@@ -380,15 +390,22 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
   isl_schedule_node* previousBandNode = isl_schedule_node_child(isl_schedule_node_copy(node), 0);
   isl_multi_union_pw_aff* previousBandNodeSchedule = isl_schedule_node_get_prefix_schedule_multi_union_pw_aff(previousBandNode);
 
-  isl_union_set* unionFilter = isl_union_set_union(isl_union_set_copy(previousFilter), isl_union_set_copy(std::get<1>(forCopyForward)));
-  unionFilter = isl_union_set_union(unionFilter, isl_union_set_copy(std::get<1>(forCopyBackward)));
+  /* union new filters with previous filter */
+  isl_union_set* unionFilter = isl_union_set_copy(previousFilter);
+  for (int i = 0; i < problem_size; i++) {
+    unionFilter = isl_union_set_union(unionFilter, isl_union_set_copy(std::get<1>(forCopyForwardVector.at(i))));
+    unionFilter = isl_union_set_union(unionFilter, isl_union_set_copy(std::get<1>(forCopyBackwardVector.at(i))));
+  }
+  
   std::string kernelName("kernel("+toString(i)+")");
   isl_id* id = isl_id_alloc(context->ctx_, kernelName.c_str(), nullptr);
 
   /* add all annotations */
   annotateStatement("kernel(" + toString(i)+")", "reqd_work_group_size", 1, 1, 1);
-  annotateStatement(toString(isl_multi_union_pw_aff_to_str(std::get<2>(forCopyForward))), "xcl_pipeline_loop");
-  annotateStatement(toString(isl_multi_union_pw_aff_to_str(std::get<2>(forCopyBackward))), "xcl_pipeline_loop");
+  for (int i = 0; i < problem_size; i++) {
+    annotateStatement(toString(isl_multi_union_pw_aff_to_str(std::get<2>(forCopyForwardVector.at(i)))), "xcl_pipeline_loop");
+    annotateStatement(toString(isl_multi_union_pw_aff_to_str(std::get<2>(forCopyBackwardVector.at(i)))), "xcl_pipeline_loop");
+  }
   annotateStatement(toString(isl_multi_union_pw_aff_to_str(previousBandNodeSchedule)), "xcl_pipeline_loop");
   annotateStatement(toString(isl_multi_union_pw_aff_to_str(previousBandNodeSchedule)), "xcl_pipeline_loop");
 
@@ -398,14 +415,8 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
   isl::union_set cppPreviousFilter = isl::manage(isl_union_set_copy(previousFilter));
   isl::union_map cppUnionCopy = isl::manage(isl_union_map_copy(unionCopy));
 
-  isl::union_set cppCopyForward1 = isl::manage(isl_union_set_copy(std::get<1>(forCopyForward)));
-  isl::multi_union_pw_aff cppCopyForward2 = isl::manage(isl_multi_union_pw_aff_copy(std::get<2>(forCopyForward)));
-
   isl::union_set cppPreviousFilter2 = isl::manage(isl_union_set_copy(previousFilter));
   isl::multi_union_pw_aff cppPreviousBandNodeSchedule = isl::manage(isl_multi_union_pw_aff_copy(previousBandNodeSchedule));
-
-  isl::union_set cppCopyBackward1 = isl::manage(isl_union_set_copy(std::get<1>(forCopyBackward)));
-  isl::multi_union_pw_aff cppCopyBackward2 = isl::manage(isl_multi_union_pw_aff_copy(std::get<2>(forCopyBackward)));
 
   isl::union_set cppTransferBackwardFilter = isl::manage(isl_union_set_copy(transferBackwardFilter));
 
@@ -413,35 +424,50 @@ static isl::schedule_node transform(int i, isl_schedule_node* node, TestContext*
   isl::union_set cppUnionFilter = isl::manage(isl_union_set_copy(unionFilter));
   
   isl::id cppId= isl::manage(id);
-       
+
+  std::vector<isl::multi_union_pw_aff> cppCopyForwardScheduleVector;
+  std::vector<isl::multi_union_pw_aff> cppCopyBackwardScheduleVector;
+
+  std::vector<isl::union_set> cppCopyForwardSetVector;
+  std::vector<isl::union_set> cppCopyBackwardSetVector;
+
+  for (int i = 0; i < problem_size; i++) {
+    isl::union_set cppCopyForward1 = isl::manage(std::get<1>(forCopyForwardVector.at(i)));
+    isl::multi_union_pw_aff cppCopyForward2 = isl::manage(std::get<2>(forCopyForwardVector.at(i)));
+    isl::union_set cppCopyBackward1 = isl::manage(std::get<1>(forCopyBackwardVector.at(i)));
+    isl::multi_union_pw_aff cppCopyBackward2 = isl::manage(std::get<2>(forCopyBackwardVector.at(i)));
+    cppCopyForwardSetVector.push_back(cppCopyForward1);
+    cppCopyBackwardSetVector.push_back(cppCopyBackward1);
+    cppCopyForwardScheduleVector.push_back(cppCopyForward2);
+    cppCopyBackwardScheduleVector.push_back(cppCopyBackward2);
+  }
+
+
+  /* create vector of builders */
   using namespace builders;
 
-  std::vector<ScheduleNodeBuilder> filterVector;
-  auto builder1 = filter(cppTransferForwardFilter);
-  auto builder2 = filter(cppTransferBackwardFilter);
-  
-  filterVector.push_back(builder1);
-  filterVector.push_back(builder2);
+  std::vector<ScheduleNodeBuilder> filterForwardVector;
+  std::vector<ScheduleNodeBuilder> filterBackwardVector;
+
+  for (int i = 0; i < problem_size; i++) {
+    auto builderForward = filter(cppCopyForwardSetVector.at(i), band(cppCopyForwardScheduleVector.at(i)));
+    auto builderBackward = filter(cppCopyBackwardSetVector.at(i), band(cppCopyBackwardScheduleVector.at(i)));
+    filterForwardVector.push_back(builderForward);
+    filterBackwardVector.push_back(builderBackward);
+  }
   
   auto builder = mark(cppId,
 		    extension(cppUnionExtension,
-		     sequenceMix(
-		       filterVector,
-			      //filter(cppTransferForwardFilter),
+		     sequence(
+		       filter(cppTransferForwardFilter),
 		       filter(cppUnionFilter,
 		       	 sequence(
-			   filter(cppCopyForward1,
-		       	     band(cppCopyForward2
-		       	     )
-		       	   ),
+		           filterForwardVector,
 			   subtree(cppPreviousFilterNode),
-			   filter(cppCopyBackward1,
-			     band(cppCopyBackward2
-			     )
-                           )
+			   filterBackwardVector
 		         )
-			      )//,
-		       //filter(cppTransferBackwardFilter)
+		       ),
+		       filter(cppTransferBackwardFilter)
 		     )
 		   )
 		 );
