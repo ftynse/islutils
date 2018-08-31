@@ -67,18 +67,6 @@ ScheduleNodeBuilder context(isl::set set, ScheduleNodeBuilder &&child);
 template <typename... Args, typename = typename std::enable_if<std::is_same<
                                 typename std::common_type<Args...>::type,
                                 ScheduleNodeBuilder>::value>::type>
-ScheduleNodeBuilder sequence(Args... children) {
-  ScheduleNodeBuilder builder;
-  builder.current_ = isl_schedule_node_sequence;
-  builder.children_ = {children...};
-  return builder;
-}
-
-ScheduleNodeBuilder sequence(std::vector<ScheduleNodeBuilder> &&children);
-
-template <typename... Args, typename = typename std::enable_if<std::is_same<
-                                typename std::common_type<Args...>::type,
-                                ScheduleNodeBuilder>::value>::type>
 ScheduleNodeBuilder set(Args... children) {
   ScheduleNodeBuilder builder;
   builder.current_ = isl_schedule_node_set;
@@ -90,33 +78,30 @@ ScheduleNodeBuilder set(std::vector<ScheduleNodeBuilder> &&children);
 
 ScheduleNodeBuilder subtree(isl::schedule_node node);
 
-template <typename T>
-std::vector<ScheduleNodeBuilder> sequenceTransform(T t) {
+template <typename T,
+          typename = typename std::enable_if<
+              std::is_same<T, ScheduleNodeBuilder>::value ||
+              std::is_same<T, std::vector<ScheduleNodeBuilder>>::value>::type>
+std::vector<ScheduleNodeBuilder> varargToVector(T t) {
   return {t};
 }
 
-template<typename T, class ...Args>
-std::vector<ScheduleNodeBuilder> sequenceTransform(T t, Args... args)
-{
-
-//   if (sizeof...(args) == 0) {
-//     return sequenceTransform(t);
-//   }
-   std::vector<ScheduleNodeBuilder> vv = sequenceTransform(args...);
-   std::vector<ScheduleNodeBuilder> vv2 = {t};
-   vv2.insert(std::end(vv2), std::begin(vv), std::end(vv));;
-   return vv2;
+template <typename T, class... Args>
+std::vector<ScheduleNodeBuilder> varargToVector(T t, Args... args) {
+  std::vector<ScheduleNodeBuilder> rest = varargToVector(args...);
+  std::vector<ScheduleNodeBuilder> result = {t};
+  result.insert(std::end(result), std::make_move_iterator(rest.begin()),
+                std::make_move_iterator(rest.end()));
+  return result;
 }
 
-template<class ...Args>
-ScheduleNodeBuilder sequence(Args... args) {
-  std::vector<ScheduleNodeBuilder> children = sequenceTransform(args...);
+template <class... Args> ScheduleNodeBuilder sequence(Args... args) {
+  std::vector<ScheduleNodeBuilder> children = varargToVector(args...);
   ScheduleNodeBuilder builder;
   builder.current_ = isl_schedule_node_sequence;
   builder.children_ = children;
   return builder;
 }
-
 
 } // namespace builders
 

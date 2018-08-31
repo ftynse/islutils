@@ -38,7 +38,7 @@ add_custom_target(check-transformer COMMAND test_transformer)
 add_dependencies(check check-transformer)
 
 add_custom_target(check-access COMMAND test_access)
-add_dependencies(check check-transformer)
+add_dependencies(check check-access)
 
 add_custom_target(check-extension COMMAND test_extension)
 add_dependencies(check check-extension)

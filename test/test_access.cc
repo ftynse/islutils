@@ -1,19 +1,24 @@
 #include "islutils/access.h"
+#include "islutils/access_patterns.h"
+#include "islutils/ctx.h"
 #include "islutils/parser.h"
 
 #include "gtest/gtest.h"
 
-static matchers::PlaceholderSet makePlaceholderSet(isl::ctx ctx) {
+using util::ScopedCtx;
+using namespace matchers;
+
+static matchers::PlaceholderSet<SingleInputDim, SimpleAff>
+makePlaceholderSet(isl::ctx ctx) {
   using namespace matchers;
 
-  Placeholder p1, p2;
-  p1.coefficient_ = isl::val(ctx, 1);
-  p2.coefficient_ = isl::val(ctx, 2);
-  p1.constant_ = isl::val::zero(ctx);
-  p2.constant_ = isl::val::zero(ctx);
-  p1.outDimPos_ = 1;
-  p2.outDimPos_ = 0;
-  PlaceholderSet ps;
+  Placeholder<SingleInputDim, SimpleAff> p1(SimpleAff(ctx), 1);
+  Placeholder<SingleInputDim, SimpleAff> p2(SimpleAff(ctx), 0);
+  p1.pattern_.coefficient_ = isl::val(ctx, 1);
+  p2.pattern_.coefficient_ = isl::val(ctx, 2);
+  p1.pattern_.constant_ = isl::val::zero(ctx);
+  p2.pattern_.constant_ = isl::val::zero(ctx);
+  PlaceholderSet<SingleInputDim, SimpleAff> ps;
   ps.placeholders_.push_back(p1);
   ps.placeholders_.push_back(p2);
   ps.placeholderFolds_.push_back(0);
@@ -30,7 +35,7 @@ static matchers::PlaceholderSet makePlaceholderSet(isl::ctx ctx) {
 TEST(AccessMatcher, TwoMapsTwoMatches) {
   using namespace matchers;
 
-  auto ctx = isl::ctx(isl_ctx_alloc());
+  auto ctx = ScopedCtx();
   auto ps = makePlaceholderSet(ctx);
   auto umap = isl::union_map(
       ctx, "{[i,j]->[a,b]: a=2*j and b=i; [i,j]->A[x,y]: x=2*j and y=i}");
@@ -38,20 +43,57 @@ TEST(AccessMatcher, TwoMapsTwoMatches) {
   // There are 2 possible matches: the first and the second map of the union.
   auto matches = match(umap, ps);
   EXPECT_EQ(matches.size(), 2);
-
-  isl_ctx_free(ctx.release());
 }
 
-static matchers::PlaceholderSet makeTwoGroupPlaceholderSet(isl::ctx ctx) {
+TEST(AccessMatcher, PositionalArguments) {
+  using namespace matchers;
+
+  auto ctx = ScopedCtx();
+  auto umap = isl::union_map(
+      ctx, "{[i,j]->[a,b]: a=2*j and b=i; [i,j]->A[x,y]: x=2*j and y=i}");
+
+  auto _1 = placeholder(ctx);
+  auto _2 = placeholder(ctx);
+  auto matches = match(umap, allOf(access(2 * _1, _2)));
+  // There are 2 possible matches: the first and the second map of the union.
+  EXPECT_EQ(matches.size(), 2);
+}
+
+TEST(AccessMatcher, MatchResults) {
+  using namespace matchers;
+
+  auto ctx = ScopedCtx();
+  auto umap = isl::union_map(ctx, "{[i,j]->A[a,b]: a=i and b=j;"
+                                  " [i,j]->B[a,b]: a=j and b=i;"
+                                  " [i,j]->C[a,b]: a=i and b=j}");
+
+  auto _1 = placeholder(ctx);
+  auto _2 = placeholder(ctx);
+  auto matches = match(umap, allOf(access(_1, _2)));
+  ASSERT_EQ(matches.size(), 3);
+
+  // Check that we can inspect the result using placeholder objects.
+  for (const auto &m : matches) {
+    EXPECT_FALSE(m[_1].candidateMapSpace_.is_null());
+    EXPECT_FALSE(m[_2].candidateMapSpace_.is_null());
+
+    // Check that we got the matching right.
+    EXPECT_TRUE(
+        (m[_1].payload_.inputDimPos_ == 0 && m[_2].payload_.inputDimPos_ == 1) ^
+        (m[_1].payload_.inputDimPos_ == 1 && m[_2].payload_.inputDimPos_ == 0));
+  }
+}
+
+static matchers::PlaceholderSet<SingleInputDim, SimpleAff>
+makeTwoGroupPlaceholderSet(isl::ctx ctx) {
   using namespace matchers;
 
   auto ps = makePlaceholderSet(ctx);
 
   // Make this similar to p1.
-  Placeholder p3;
-  p3.coefficient_ = isl::val(ctx, 1);
-  p3.constant_ = isl::val::zero(ctx);
-  p3.outDimPos_ = 1;
+  Placeholder<SingleInputDim, SimpleAff> p3(SimpleAff(ctx), 1);
+  p3.pattern_.coefficient_ = isl::val(ctx, 1);
+  p3.pattern_.constant_ = isl::val::zero(ctx);
   ps.placeholders_.push_back(p3);
   ps.placeholderFolds_.push_back(2);
 
@@ -65,11 +107,14 @@ static matchers::PlaceholderSet makeTwoGroupPlaceholderSet(isl::ctx ctx) {
 TEST(AccessMatcher, TwoGroups) {
   using namespace matchers;
 
-  auto ctx = isl::ctx(isl_ctx_alloc());
+  auto ctx = ScopedCtx();
   auto ps = makeTwoGroupPlaceholderSet(ctx);
   auto umap = isl::union_map(
       ctx, "{[i,j]->[a,b]: a=2*j and b=i; [i,j]->A[x,y]: x=42*j and y=i}");
-  auto matches = match(umap, ps);
+  auto _1 = placeholder(ctx);
+  auto _2 = placeholder(ctx);
+  auto matches = match(
+      umap, allOf(access(dim(0, 2 * _2), dim(1, _1)), access(dim(1, _1))));
   // Only one match possible: anonymous space to p1,p2, "A" space to p3.
   // Because p3 and p1 belong to different groups, they cannot both match the
   // anonymous space.
@@ -77,35 +122,36 @@ TEST(AccessMatcher, TwoGroups) {
   // match them (p2 does not match the "A" space).
   EXPECT_EQ(matches.size(), 1);
 
-  isl_ctx_free(ctx.release());
+  auto _3 = placeholder(ctx);
+  matches = match(
+      umap, allOf(access(dim(0, 2 * _2), dim(1, _1)), access(dim(1, _3))));
+  // No matches possible because _3 cannot be assigned the same candidate as _1.
+  EXPECT_EQ(matches.size(), 0);
 }
 
 TEST(AccessMatcher, TwoMapsOneMatch) {
   using namespace matchers;
 
-  auto ctx = isl::ctx(isl_ctx_alloc());
+  auto ctx = ScopedCtx();
   auto ps = makePlaceholderSet(ctx);
 
   auto umap = isl::union_map(
       ctx, "{[i,j]->[a,b]: a=2*j and b=i; [i,j]->A[x,y]: x=j and y=i}");
   auto matches = match(umap, ps);
   EXPECT_EQ(matches.size(), 1);
-
-  isl_ctx_free(ctx.release());
 }
 
-static matchers::PlaceholderSet
+static matchers::PlaceholderSet<SingleInputDim, SimpleAff>
 makeSameGroupSameFoldPlaceholderSet(isl::ctx ctx) {
   using namespace matchers;
 
-  Placeholder p1, p2;
-  p1.coefficient_ = isl::val(ctx, 1);
-  p2.coefficient_ = isl::val(ctx, 1);
-  p1.constant_ = isl::val::zero(ctx);
-  p2.constant_ = isl::val::zero(ctx);
-  p1.outDimPos_ = 1;
-  p2.outDimPos_ = 0;
-  PlaceholderSet ps;
+  Placeholder<SingleInputDim, SimpleAff> p1(SimpleAff(ctx), 1);
+  Placeholder<SingleInputDim, SimpleAff> p2(SimpleAff(ctx), 0);
+  p1.pattern_.coefficient_ = isl::val(ctx, 1);
+  p2.pattern_.coefficient_ = isl::val(ctx, 1);
+  p1.pattern_.constant_ = isl::val::zero(ctx);
+  p2.pattern_.constant_ = isl::val::zero(ctx);
+  PlaceholderSet<SingleInputDim, SimpleAff> ps;
   ps.placeholders_.push_back(p1);
   ps.placeholders_.push_back(p2);
 
@@ -124,134 +170,41 @@ makeSameGroupSameFoldPlaceholderSet(isl::ctx ctx) {
 TEST(AccessMatcher, FoldDiagonalAccess) {
   using namespace matchers;
 
-  auto ctx = isl::ctx(isl_ctx_alloc());
+  auto ctx = ScopedCtx();
   auto ps = makeSameGroupSameFoldPlaceholderSet(ctx);
   auto umap = isl::union_map(ctx, "{[i,j]->[a,b]: a=i and b=i}");
   auto matches = match(umap, ps);
   EXPECT_EQ(matches.size(), 1);
-
-  isl_ctx_free(ctx.release());
 }
 
 TEST(AccessMatcher, FoldNonDiagonalAccess) {
   using namespace matchers;
 
-  auto ctx = isl::ctx(isl_ctx_alloc());
+  auto ctx = ScopedCtx();
   auto ps = makeSameGroupSameFoldPlaceholderSet(ctx);
   auto umap = isl::union_map(ctx, "{[i,j]->[a,b]: a=i and b=j}");
   auto matches = match(umap, ps);
   EXPECT_EQ(matches.size(), 0);
-
-  isl_ctx_free(ctx.release());
-}
-
-struct NamedPlaceholder {
-  matchers::Placeholder p;
-  std::string name;
-};
-
-NamedPlaceholder placeholder(isl::ctx ctx, const std::string n) {
-  NamedPlaceholder result;
-  result.p.coefficient_ = isl::val::one(ctx);
-  result.p.constant_ = isl::val::zero(ctx);
-  result.p.outDimPos_ = -1;
-  result.name = n;
-  return result;
-}
-
-NamedPlaceholder placeholder(isl::ctx ctx) {
-  static thread_local size_t counter = 0;
-  return placeholder(ctx, std::to_string(counter++));
-}
-
-static NamedPlaceholder dim(int pos, NamedPlaceholder np) {
-  np.p.outDimPos_ = pos;
-  return np;
-}
-
-NamedPlaceholder operator*(int i, NamedPlaceholder np) {
-  // FIXME: assuming val is always initialized...
-  np.p.coefficient_ =
-      np.p.coefficient_.mul(isl::val(np.p.coefficient_.get_ctx(), i));
-  return np;
-}
-
-NamedPlaceholder operator+(NamedPlaceholder np, int i) {
-  // FIXME: assuming val is always initialized...
-  np.p.constant_ = np.p.constant_.add(isl::val(np.p.constant_.get_ctx(), i));
-  return np;
-}
-
-using NamedPlaceholderList = std::vector<NamedPlaceholder>;
-
-template <typename... Args> static NamedPlaceholderList access(Args... args) {
-  static_assert(std::is_same<typename std::common_type<Args...>::type,
-                             NamedPlaceholder>::value,
-                "accesses can only be constructed from named placeholders");
-
-  return {args...};
-}
-
-template <typename... Args>
-static matchers::PlaceholderSet makePS(Args... args) {
-  static_assert(
-      std::is_same<typename std::common_type<Args...>::type,
-                   NamedPlaceholderList>::value,
-      "can only make PlaceholderSet from lists of named placeholders");
-
-  using namespace matchers;
-
-  std::vector<NamedPlaceholderList> placeholderLists = {args...};
-  std::vector<std::pair<std::string, size_t>> knownNames;
-  PlaceholderSet ps;
-  for (const auto &npl : placeholderLists) {
-    if (npl.empty()) {
-      continue;
-    }
-
-    size_t index = ps.placeholders_.size();
-    ps.placeholderGroups_.emplace_back();
-    for (const auto &np : npl) {
-      ps.placeholders_.push_back(np.p);
-      ps.placeholderGroups_.back().push_back(index);
-      auto namePos =
-          std::find_if(knownNames.begin(), knownNames.end(),
-                       [np](const std::pair<std::string, size_t> &pair) {
-                         return pair.first == np.name;
-                       });
-      if (namePos == knownNames.end()) {
-        knownNames.emplace_back(np.name, index);
-        ps.placeholderFolds_.emplace_back(index);
-      } else {
-        ps.placeholderFolds_.emplace_back(namePos->second);
-      }
-      ++index;
-    }
-  }
-
-  return ps;
 }
 
 TEST(AccessMatcher, FoldAcrossGroupsSame) {
   using namespace matchers;
 
-  auto ctx = isl::ctx(isl_ctx_alloc());
+  auto ctx = ScopedCtx();
   auto _1 = placeholder(ctx);
   auto _2 = placeholder(ctx);
-  auto ps = makePS(access(dim(0, 2 * _2), dim(1, _1)), access(dim(1, _1)));
+  auto ps = allOf(access(dim(0, 2 * _2), dim(1, _1)), access(dim(1, _1)));
   auto umap = isl::union_map(
       ctx, "{[i,j]->[a,b]: a=2*j and b=i; [i,j]->A[x,y]: x=j and y=i}");
   auto matches = match(umap, ps);
   // Expect to have a match because b=i and y=i are properly folded.
   EXPECT_EQ(matches.size(), 1);
-
-  isl_ctx_free(ctx.release());
 }
 
 TEST(AccessMatcher, FoldAcrossGroupsDifferent) {
   using namespace matchers;
 
-  auto ctx = isl::ctx(isl_ctx_alloc());
+  auto ctx = ScopedCtx();
   auto ps = makeTwoGroupPlaceholderSet(ctx);
   // Rewrite two-group placeholder set to have the same fold for p1 and p3.
   ps.placeholderFolds_[2] = 0;
@@ -261,43 +214,38 @@ TEST(AccessMatcher, FoldAcrossGroupsDifferent) {
   auto matches = match(umap, ps);
   // Expect not to have a match because b=i and y=j are not properly folded.
   EXPECT_EQ(matches.size(), 0);
-
-  isl_ctx_free(ctx.release());
 }
 
 TEST(AccessMatcher, PlaceholderWithConstants) {
   using namespace matchers;
 
-  auto ctx = isl::ctx(isl_ctx_alloc());
+  auto ctx = ScopedCtx();
   auto _1 = placeholder(ctx);
   auto _2 = placeholder(ctx);
   auto umap = isl::union_map(ctx, "{[i,j]->[a,b]: a=2*j+1 and b=i+42}");
-  auto ps = makePS(access(dim(0, 2 * _1 + 1), dim(1, _2 + 42)));
+  auto ps = allOf(access(dim(0, 2 * _1 + 1), dim(1, _2 + 42)));
   auto matches = match(umap, ps);
   EXPECT_EQ(matches.size(), 1);
   umap = isl::union_map(ctx, "{[i,j]->[a,b]: a=2*j+1 and b=i+43}");
   EXPECT_EQ(match(umap, ps).size(), 0);
-
-  isl_ctx_free(ctx.release());
 }
 
 TEST(AccessMatcher, PlaceholderWithConstantsNoMatch) {
   using namespace matchers;
 
-  auto ctx = isl::ctx(isl_ctx_alloc());
+  auto ctx = ScopedCtx();
   auto _1 = placeholder(ctx);
   auto _2 = placeholder(ctx);
   auto umap = isl::union_map(ctx, "{[i,j]->[a,b]: a=2*j+1 and b=i+42}");
-  auto ps = makePS(access(dim(0, 2 * _1 + 1), dim(1, _2)));
+  auto ps = allOf(access(dim(0, 2 * _1 + 1), dim(1, _2)));
   auto matches = match(umap, ps);
   EXPECT_EQ(matches.size(), 0);
-
-  isl_ctx_free(ctx.release());
 }
 
 TEST(AccessMatcher, Stencil) {
   using namespace matchers;
-  auto ctx = isl::ctx(isl_ctx_alloc());
+
+  auto ctx = ScopedCtx();
   auto scop = Parser("inputs/stencil.c").getScop();
   ASSERT_FALSE(scop.schedule.is_null());
 
@@ -309,15 +257,84 @@ TEST(AccessMatcher, Stencil) {
   auto reads = scop.reads.curry().apply_domain(schedule);
   auto writes = scop.mustWrites.curry().apply_domain(schedule);
 
-  // Note that placeholders are _not_ reused between different calls to makePS.
+  // Note that placeholders are _not_ reused between different calls to allOf.
   auto _1 = placeholder(ctx);
-  auto psReads = makePS(access(dim(0, _1 + (-1))), access(dim(0, _1)),
-                        access(dim(0, _1 + 1)));
-  auto psWrites = makePS(access(dim(0, _1)));
+  auto psReads = allOf(access(dim(0, _1 + (-1))), access(dim(0, _1)),
+                       access(dim(0, _1 + 1)));
+  auto psWrites = allOf(access(dim(0, _1)));
   EXPECT_EQ(match(reads, psReads).size(), 1);
   EXPECT_EQ(match(writes, psWrites).size(), 1);
+}
 
-  isl_ctx_free(ctx.release());
+TEST(AccessMatcher, ThreeIdentical) {
+  using namespace matchers;
+
+  auto ctx = ScopedCtx();
+  auto umap = isl::union_map(ctx, "{[i,j]->A[a,b]: a=i and b=j;"
+                                  " [i,j]->B[a,b]: a=j and b=i;"
+                                  " [i,j]->C[a,b]: a=i and b=j}");
+
+  auto _1 = placeholder(ctx);
+  auto _2 = placeholder(ctx);
+  auto result = findAndReplace(umap, replace(access(_1, _2), access(_2, _1)));
+  auto expected = isl::union_map(ctx, "{[i,j]->A[a,b]: a=j and b=i;"
+                                      " [i,j]->B[a,b]: a=i and b=j;"
+                                      " [i,j]->C[a,b]: a=j and b=i}");
+  EXPECT_TRUE(result.is_equal(expected));
+}
+
+TEST(AccessMatcher, Strides) {
+  auto ctx = ScopedCtx();
+  auto umap = isl::union_map(ctx, "{[i,j]->A[a,b]: a=42*i and b=j;"
+                                  " [i,j]->B[a,b]: a=42*i and b=2*j}");
+  EXPECT_EQ(match(umap, allOf(access(dim(1, stride(ctx, 1))))).size(), 1);
+  EXPECT_EQ(match(umap, allOf(access(dim(1, stride(ctx, 2))))).size(), 1);
+  // Stride is only implemented for the last input dim, here "j", so "a" in
+  // outputs does not change with "j" and thus has stride 0.  Therefore, no
+  // match is expected.
+  EXPECT_EQ(match(umap, allOf(access(dim(0, stride(ctx, 42))))).size(), 0);
+
+  // Here, on the contrary, "i" is the last input dimension that changes and
+  // therefore both maps are expected to match.
+  umap = isl::union_map(ctx, "{[j,i]->A[a,b]: a=42*i and b=j;"
+                             " [j,i]->B[a,b]: a=42*i and b=2*j}");
+  EXPECT_EQ(match(umap, allOf(access(dim(0, stride(ctx, 42))))).size(), 2);
+
+  umap = isl::union_map(ctx, "[N,M] -> {[i,j,k]->A[a]: a=42*i+3*j+k+N}");
+  EXPECT_EQ(match(umap, allOf(access(dim(0, stride(ctx, 1))))).size(), 1);
+}
+
+TEST(AccessMatcher, NegativeIndexMatch) {
+  auto ctx = ScopedCtx();
+  auto umap = isl::union_map(ctx, "{[i,j]->A[a]: a=j;"
+                                  " [i,j]->B[a]: a=i;"
+                                  " [i,j]->C[a,b]: a=42*i and b=j;"
+                                  " [i,j]->D[a,b]: a=42*i and b=2*j;"
+                                  " [i,j]->E[a,b,e,f,g]: g=j;"
+                                  " [i,j]->F[a,b,e,f,g]: g=i;"
+                                  " [i,j]->G[a,b,e,f,g]: f=j}");
+  EXPECT_EQ(match(umap, allOf(access(dim(-1, stride(ctx, 1))))).size(), 3);
+  EXPECT_EQ(match(umap, allOf(access(dim(-1, stride(ctx, 2))))).size(), 1);
+  EXPECT_EQ(match(umap, allOf(access(dim(-2, stride(ctx, 1))))).size(), 1);
+}
+
+TEST(AccessMatcher, NegativeIndexTransform) {
+  auto ctx = ScopedCtx();
+  auto umap = isl::union_map(ctx, "{[i,j]->A[a]: a=j;"
+                                  " [i,j]->B[a]: a=i;"
+                                  " [i,j]->C[a,b]: a=42*i and b=j;"
+                                  " [i,j]->D[a,b]: a=42*i and b=2*j;"
+                                  " [i,j]->E[a,b,e,f,g]: f=42*i and g=j;"
+                                  " [i,j]->F[a,b,e,f,g]: g=i;"
+                                  " [i,j]->G[a,b,e,f,g]: f=j}");
+  auto i = placeholder(ctx);
+  auto j = placeholder(ctx);
+  auto result =
+      findAndReplace(umap, replace(access(dim(-2, 42 * i), dim(-1, j)),
+                                   access(dim(-2, j), dim(-1, 42 * i))));
+
+  EXPECT_EQ(match(result, allOf(access(dim(-1, 42 * placeholder(ctx))))).size(),
+            2);
 }
 
 int main(int argc, char **argv) {

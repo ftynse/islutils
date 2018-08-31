@@ -46,29 +46,6 @@ isl_schedule_node_type toIslType(ScheduleNodeType type) {
   }
 }
 
-// TODO: use variadic template.
-/* Definitions for relation matcher factory functions *************************/
-#define DEF_TYPE_MATCHER_RELATION(name, type)                                  \
-  inline RelationMatcher name(char a, char b) {                                \
-    RelationMatcher matcher;                                                   \
-    matcher.type_ = type;                                                      \
-    matcher.indexes_.push_back(a);                                             \
-    matcher.indexes_.push_back(b);                                             \
-    matcher.setDim_.reserve(2);                                                \
-    return matcher;                                                            \
-  }                                                                            \
-                                                                               \
-  inline RelationMatcher name(char a) {                                        \
-    RelationMatcher matcher;                                                   \
-    matcher.type_ = type;                                                      \
-    matcher.indexes_.push_back(a);                                             \
-    matcher.setDim_.reserve(1);                                                \
-    return matcher;                                                            \
-  }
-
-DEF_TYPE_MATCHER_RELATION(read, RelationKind::read)
-DEF_TYPE_MATCHER_RELATION(write, RelationKind::write)
-
 /* Definitions for schedule tree matcher factory functions ********************/
 #define DEF_TYPE_MATCHER(name, type)                                           \
   template <typename Arg, typename... Args, typename>                          \
@@ -143,15 +120,30 @@ inline ScheduleNodeMatcher leaf() {
   return matcher;
 }
 
-inline ScheduleNodeMatcher any(isl::schedule_node &capture) {
+inline ScheduleNodeMatcher anyTree(isl::schedule_node &capture) {
   ScheduleNodeMatcher matcher(capture);
-  matcher.current_ = ScheduleNodeType::Any;
+  matcher.current_ = ScheduleNodeType::AnyTree;
   return matcher;
 }
 
-inline ScheduleNodeMatcher any() {
+inline ScheduleNodeMatcher anyTree() {
   static isl::schedule_node dummyCapture;
-  return any(dummyCapture);
+  return anyTree(dummyCapture);
+}
+
+inline ScheduleNodeMatcher anyForest() {
+  static isl::schedule_node dummyCapture;
+  ScheduleNodeMatcher matcher(dummyCapture);
+  matcher.current_ = ScheduleNodeType::AnyForest;
+  return matcher;
+}
+
+inline ScheduleNodeMatcher
+anyForest(std::vector<isl::schedule_node> &multiCapture) {
+  static isl::schedule_node dummyCapture;
+  ScheduleNodeMatcher matcher(dummyCapture, multiCapture);
+  matcher.current_ = ScheduleNodeType::AnyForest;
+  return matcher;
 }
 
 } // namespace matchers

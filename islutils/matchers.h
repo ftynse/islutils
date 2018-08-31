@@ -18,8 +18,10 @@
  * auto m = domain(
  *            context(
  *              sequence(
- *                filter(),
- *                filter())));
+ *                filter(
+ *                  anyTree()),
+ *                filter(
+ *                  anyTree()))));
  * ```
  *
  * matches a subtree that starts at a domain node, having context as only
@@ -31,49 +33,6 @@
 
 /** \ingroup Matchers */
 namespace matchers {
-
-// It describes the type of matcher.
-// read - read access
-// write - write access
-// readAndWrite - read and write access
-
-enum class RelationKind { read, write, readAndWrite };
-
-class RelationMatcher;
-
-// TODO: change std::string.
-typedef std::vector<std::string> matchingDims;
-
-// TODO: extend to use variadic template
-class RelationMatcher {
-#define DECL_FRIEND_TYPE_MATCH(name)                                           \
-  friend RelationMatcher name(char a, char b);                                 \
-  friend RelationMatcher name(char a);
-  DECL_FRIEND_TYPE_MATCH(read)
-  DECL_FRIEND_TYPE_MATCH(write)
-#undef DECL_FRIEND_TYPE_MATCH
-
-public:
-  // is a read access?
-  bool isRead() const;
-  // is a write access?
-  bool isWrite() const;
-  // return literal at index i
-  char getIndex(unsigned i) const;
-  // get number of literals
-  int getIndexesSize() const;
-  ~RelationMatcher() = default;
-
-private:
-  // type (read, write or readAndWrite)
-  RelationKind type_;
-  // describe how the indexes should look like. Indexes layout.
-  std::vector<char> indexes_;
-  // once we figured out a combination that
-  // satisfy all the matcher we "fixed" the
-  // dimensions.
-  std::vector<matchingDims> setDim_;
-};
 
 class ScheduleNodeMatcher;
 
@@ -89,8 +48,18 @@ class ScheduleNodeMatcher;
  * to store a callback function for finer-grain matching.  This function is
  * called on the node before attempting to match its children.  It is passed
  * the node itself and returns true if the matching may continue and false if
- * it should fail immediately without processing the children.  When no child
- * matchers are provided, the node is allowed to have zero or more children.
+ * it should fail immediately without processing the children.
+ *
+ * Type-based matchers must always have child matchers.  These are either
+ * (lists of) type-based matchers or special matchers leaf(), anyTree() or
+ * anyForest().
+ *
+ * The special matcher leaf() indicates that the tree node containing it should
+ * be the leaf in the schedule tree.  The matcher anyTree() indicates that the
+ * tree node may contain exactly one child of the given type.  The matcher
+ * anyForest() indicates that the node may contain an arbitrary number of
+ * children (useful for sequence or set nodes).
+ *
  */
 /** \{ */
 template <typename Arg, typename... Args,
@@ -181,8 +150,10 @@ ScheduleNodeMatcher expansion(std::function<bool(isl::schedule_node)> callback,
 
 ScheduleNodeMatcher leaf();
 
-ScheduleNodeMatcher any(isl::schedule_node &capture);
-ScheduleNodeMatcher any();
+ScheduleNodeMatcher anyTree(isl::schedule_node &capture);
+ScheduleNodeMatcher anyTree();
+
+ScheduleNodeMatcher anyForest(std::vector<isl::schedule_node> &captures);
 /** \} */
 
 enum class ScheduleNodeType {
@@ -198,7 +169,8 @@ enum class ScheduleNodeType {
   Set,
   Expansion,
 
-  Any
+  AnyTree,
+  AnyForest
 };
 
 inline isl_schedule_node_type toIslType(ScheduleNodeType type);
@@ -240,12 +212,17 @@ class ScheduleNodeMatcher {
 #undef DECL_FRIEND_TYPE_MATCH
 
   friend ScheduleNodeMatcher leaf();
-  friend ScheduleNodeMatcher any();
-  friend ScheduleNodeMatcher any(isl::schedule_node &);
+  friend ScheduleNodeMatcher anyTree();
+  friend ScheduleNodeMatcher anyTree(isl::schedule_node &);
+  friend ScheduleNodeMatcher anyForest();
+  friend ScheduleNodeMatcher anyForest(std::vector<isl::schedule_node> &);
 
 private:
   explicit ScheduleNodeMatcher(isl::schedule_node &capture)
-      : capture_(capture) {}
+      : capture_(capture), multiCapture_(dummyMultiCaptureData_) {}
+  explicit ScheduleNodeMatcher(isl::schedule_node &capture,
+                               std::vector<isl::schedule_node> &multiCapture)
+      : capture_(capture), multiCapture_(multiCapture) {}
 
 public:
   static bool isMatching(const ScheduleNodeMatcher &matcher,
@@ -256,6 +233,9 @@ private:
   std::vector<ScheduleNodeMatcher> children_;
   std::function<bool(isl::schedule_node)> nodeCallback_;
   isl::schedule_node &capture_;
+  std::vector<isl::schedule_node> &multiCapture_;
+
+  static thread_local std::vector<isl::schedule_node> dummyMultiCaptureData_;
 };
 
 std::function<bool(isl::schedule_node)>
@@ -273,68 +253,3 @@ hasDescendant(const ScheduleNodeMatcher &descendantMatcher);
 } // namespace matchers
 
 #include "matchers-inl.h"
-
-// A constraint is introduced by an access and a matcher.
-// In more details, a constraint looks like (A, i0). Meaning that
-// we have assigned dimension i0 to literal A.
-/*
-namespace constraint {
-
-// represents single constraint.
-typedef std::tuple<char, isl::pw_aff> singleConstraint;
-// represents collection of constraints.
-typedef std::vector<singleConstraint> MultipleConstraints;
-
-// TODO: check if we can avoid int dimsInvolved.
-// decouple matcher from constraint list.
-struct MatcherConstraints {
-  int dimsInvolved = -1;
-  MultipleConstraints constraints;
-};
-
-// helper function for printing single constraint.
-inline void print_single_constraint(raw_ostream &OS,
-                                    const singleConstraint &c) {
-  OS << std::get<0>(c) << "," << std::get<1>(c).to_str();
-}
-
-// overloading << for printing single constraint.
-inline auto& operator<<(raw_ostream &OS, const singleConstraint &c) {
-  OS << "(";
-  print_single_constraint(OS, c);
-  return OS << ")";
-}
-
-// helper function for multiple constraints.
-inline void print_multiple_constraints(raw_ostream &OS,
-                                       const MultipleConstraints &mc) {
-  for(std::size_t i = 0; i < mc.size()-1; ++i) {
-    OS << mc[i] << ",";
-  }
-  OS << mc[mc.size()-1];
-}
-
-// overloading << for multiple constraints.
-inline auto& operator<<(raw_ostream &OS, const MultipleConstraints &mc) {
-  OS << "[";
-  print_multiple_constraints(OS, mc);
-  return OS << "]";
-}
-
-// overloading << for MatcherConstraints
-inline auto& operator<<(raw_ostream &OS, const MatcherConstraints &mc) {
-  OS << "{";
-  OS << "\n";
-  OS << "Involved Dims = " << mc.dimsInvolved << "\n";
-  if(mc.dimsInvolved == -1) {
-    OS << "Constraints = empty";
-    OS << "\n";
-    return OS << "}";
-  }
-  OS << "Constraints = " << mc.constraints;
-  OS << "\n";
-  return OS << "}";
-}
-
-} // namespace constraint
-*/
