@@ -99,9 +99,9 @@ template<typename T, class ...Args>
 std::vector<ScheduleNodeBuilder> sequenceTransform(T t, Args... args)
 {
 
-   if (sizeof...(args) == 0) {
-     return sequenceTransform(t);
-   }
+//   if (sizeof...(args) == 0) {
+//     return sequenceTransform(t);
+//   }
    std::vector<ScheduleNodeBuilder> vv = sequenceTransform(args...);
    std::vector<ScheduleNodeBuilder> vv2 = {t};
    vv2.insert(std::end(vv2), std::begin(vv), std::end(vv));;
