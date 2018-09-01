@@ -87,6 +87,44 @@ static int walkScheduleTree(const ScheduleNodeMatcher &matcher,
   return payload.counter;
 }
 
+namespace builders{
+ 
+ScheduleNodeBuilder tile(isl::schedule_node node, int tileSize) {
+  assert(isl_schedule_node_get_type(node.get()) == isl_schedule_node_band &&
+         "expect band node");
+  
+  isl::ctx ctx = node.get_ctx();
+  isl::space space = 
+      isl::manage(isl_schedule_node_band_get_space(node.get()));
+  isl::multi_val sizes = isl::multi_val::zero(space);
+
+  for(size_t i=0; i<space.dim(isl::dim::set); ++i)
+    sizes = sizes.set_val(i, isl::val(ctx,tileSize));
+  
+  isl::schedule_node tiledNode =
+    isl::manage(isl_schedule_node_band_tile(node.release(), sizes.release()));
+
+  // markers.
+  std::string marker = "1st level tiling - tiles";
+  isl::id markerTile =
+    isl::id::alloc(ctx, marker, nullptr);
+  marker = "1st level tiling - points";
+  isl::id markerPoints =
+    isl::id::alloc(ctx, marker, nullptr);
+
+  //clang-format off
+  return 
+    mark(markerTile,
+      band(tiledNode.band_get_partial_schedule(),
+        mark(markerPoints,
+          band(tiledNode.child(0).band_get_partial_schedule()))));
+  //clang-format on
+}
+
+
+} // end namespace builders
+
+
 ////////////////////////////////////
 /// tests
 ////////////////////////////////////
@@ -103,11 +141,16 @@ TEST(Integration, 1mmF) {
     scop.schedule.intersect_domain(scop.nonKillDomain);
   auto root = scop.schedule.get_root();
 
+  // accesses
+  isl::union_map reads = scop.reads.curry();
+  isl::union_map writes = scop.mustWrites.curry();
+
   // code gen not opt.
   simpleASTGen(scop,root);
 
   std::vector<isl::schedule_node> bandTarget(3);
   std::vector<isl::schedule_node> filterTarget(2);
+  std::vector<isl::schedule_node> leafTarget(2);
 
   auto matcher = [&]() {
     using namespace matchers;
@@ -116,9 +159,9 @@ TEST(Integration, 1mmF) {
       band(bandTarget[0],
         band(bandTarget[1],
           sequence(
-            filter(filterTarget[0], leaf()),
+            filter(filterTarget[0], leaf(leafTarget[0])),
             filter(filterTarget[1],
-              band(bandTarget[2], leaf())))));
+              band(bandTarget[2], leaf(leafTarget[1]))))));
     // clang-format on
   }();
 
@@ -127,8 +170,25 @@ TEST(Integration, 1mmF) {
     walkScheduleTree(matcher, scop.schedule);
 
   EXPECT_EQ(numberOfMatches, 1);
-  
-  
+ 
+  // check accesses
+  auto _1 = placeholder(ctx);
+  auto _2 = placeholder(ctx);
+  auto _3 = placeholder(ctx); 
+ 
+  auto psRead = allOf(access(dim(0, _1), dim(1, _2)),
+                      access(dim(0, _3), dim(1, _2)),
+                      access(dim(0, _1), dim(1, _3)));
+
+  auto psWrite = allOf(access(dim(0, _1), dim(1, _2)));
+
+  auto matches = match(reads, psRead);
+  EXPECT_EQ(matches.size(), 1);
+  matches = match(writes, psWrite);
+  EXPECT_EQ(matches.size(), 2);
+
+  // check stride.
+  EXPECT_EQ(match(reads, allOf(access(dim(1, stride(ctx,1))))).size(), 1); 
 
 }
 

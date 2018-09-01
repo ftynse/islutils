@@ -14,7 +14,7 @@ void kernel1mm()
       {
 	tmp[i][j] = 0;
 	for (int k = 0; k < 1024; ++k)
-	  tmp[i][j] += alpha * A[i][k] * B[k][j];
+	  tmp[i][j] += /*alpha **/ A[i][k] * B[k][j];
       }
 #pragma endscop
 
