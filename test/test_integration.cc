@@ -86,11 +86,14 @@ static int walkScheduleTree(const ScheduleNodeMatcher &matcher,
 
   return payload.counter;
 }
+
 ////////////////////////////////////
-/// test
+/// tests
 ////////////////////////////////////
+
 TEST(Integration, 1mmF) {
   using namespace matchers;
+  using namespace builders;
   
   auto ctx = ScopedCtx();
   auto scop = Parser("inputs/1mmF.c").getScop();
@@ -124,32 +127,8 @@ TEST(Integration, 1mmF) {
     walkScheduleTree(matcher, scop.schedule);
 
   EXPECT_EQ(numberOfMatches, 1);
-
-  auto scheduleI = bandTarget[0].band_get_partial_schedule();
-  auto scheduleJ = bandTarget[1].band_get_partial_schedule();
-  auto scheduleIJ = scheduleI.flat_range_product(scheduleJ);
-  auto scheduleK = bandTarget[2].band_get_partial_schedule();
-  auto filterIJ = filterTarget[0].filter_get_filter();
-  auto filterK = filterTarget[1].filter_get_filter();
-
-  auto transformedBuilder = [&]() {
-    using namespace builders;
-    //clang-format off
-    return
-      band(scheduleIJ,
-        sequence(
-          filter(filterIJ),
-          filter(filterK,
-            band(scheduleK))));
-    //clang-format on
-  }();
-
-  root = root.child(0);
-  root = root.cut();
-  root = transformedBuilder.insertAt(root);
-  root = root.parent();
-  simpleASTGen(scop, root);
-  std::cout << root.to_str() << std::endl;
+  
+  
 
 }
 
