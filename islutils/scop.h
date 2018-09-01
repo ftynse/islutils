@@ -18,12 +18,23 @@ public:
 
   /// Schedule of the Scop, defined over its domain.
   isl::schedule schedule;
+  /// context
+  isl::set context;
   /// \{
   /// Access relations of different types.
   isl::union_map reads;
   isl::union_map mayWrites;
   isl::union_map mustWrites;
   /// \}
+
+  // deps computation.
+  isl::union_map liveIn;
+  isl::union_map depFlow;
+  isl::union_map depFalse;
+  isl::union_map kills;
+
+  // domain without kill stmts
+  isl::union_set nonKillDomain;
 
   inline void dump();
 };

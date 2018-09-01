@@ -19,6 +19,9 @@ target_link_libraries(test_transformer islutils gtest_main)
 add_executable(test_access test_access.cc)
 target_link_libraries(test_access islutils gtest)
 
+add_executable(test_integration test_integration.cc)
+target_link_libraries(test_integration islutils gtest)
+
 add_custom_target(check COMMAND echo "Running all")
 
 add_custom_target(check-matchers  COMMAND test_matcher)
@@ -35,6 +38,9 @@ add_dependencies(check check-transformer)
 
 add_custom_target(check-access COMMAND test_access)
 add_dependencies(check check-access)
+
+add_custom_target(check-integration COMMAND test_integration)
+add_dependencies(check check-integration)
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/inputs/one-dimensional-init.c"
      "${CMAKE_CURRENT_BINARY_DIR}/inputs/one-dimensional-init.c"; COPYONLY)
