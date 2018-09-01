@@ -65,6 +65,10 @@ isl::schedule_node ScheduleNodeBuilder::insertSingleChildTypeNodeAt(
   if (current_ == isl_schedule_node_band) {
     node = isl::manage(isl_schedule_node_insert_partial_schedule(node.release(),
                                                                  mupa_.copy()));
+    if(buildWithOptions_) {
+      node = isl::manage(isl_schedule_node_band_set_ast_build_options(node.release(),
+								astBuildOptions_.copy()));
+    }
   } else if (current_ == isl_schedule_node_filter) {
     // TODO: if the current node is pointing to a filter, filters are merged
     // document this in builder construction:
@@ -246,6 +250,25 @@ ScheduleNodeBuilder band(isl::multi_union_pw_aff mupa,
   builder.children_.emplace_back(child);
   return builder;
 }
+
+ScheduleNodeBuilder band(isl::multi_union_pw_aff mupa,	
+			 isl::union_set astOptions,
+			 ScheduleNodeBuilder &&child) {
+  auto builder = band(mupa);
+  builder.children_.emplace_back(child);
+  builder.buildWithOptions_ = true;
+  builder.astBuildOptions_ = astOptions;
+  return builder;
+}
+
+ScheduleNodeBuilder band(isl::multi_union_pw_aff mupa,
+                         isl::union_set astOptions) {
+  auto builder = band(mupa);
+  builder.buildWithOptions_ = true;
+  builder.astBuildOptions_ = astOptions;
+  return builder;
+}
+
 
 ScheduleNodeBuilder filter(isl::union_set uset) {
   ScheduleNodeBuilder builder;

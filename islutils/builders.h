@@ -26,6 +26,9 @@ public:
 public:
   isl_schedule_node_type current_;
   std::vector<ScheduleNodeBuilder> children_;
+  // AST gen
+  bool buildWithOptions_ = false;
+  isl::union_set astBuildOptions_;
 
   // XXX: Cannot use a union because C++ isl types have non-trivial
   // constructors.
@@ -44,6 +47,11 @@ ScheduleNodeBuilder domain(isl::union_set uset, ScheduleNodeBuilder &&child);
 ScheduleNodeBuilder band(isl::multi_union_pw_aff mupa);
 ScheduleNodeBuilder band(isl::multi_union_pw_aff mupa,
                          ScheduleNodeBuilder &&child);
+ScheduleNodeBuilder band(isl::multi_union_pw_aff mupa,
+                         isl::union_set astOptions);
+ScheduleNodeBuilder band(isl::multi_union_pw_aff mupa,
+			 isl::union_set astOptions,
+			 ScheduleNodeBuilder &&child);
 
 ScheduleNodeBuilder filter(isl::union_set uset);
 ScheduleNodeBuilder filter(isl::union_set uset, ScheduleNodeBuilder &&child);

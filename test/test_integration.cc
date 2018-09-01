@@ -88,21 +88,30 @@ static int walkScheduleTree(const ScheduleNodeMatcher &matcher,
 }
 
 namespace builders{
- 
-ScheduleNodeBuilder tile(isl::schedule_node node, int tileSize) {
+
+static isl::schedule_node tileNode(isl::schedule_node node, int tileSize) {
   assert(isl_schedule_node_get_type(node.get()) == isl_schedule_node_band &&
          "expect band node");
-  
   isl::ctx ctx = node.get_ctx();
   isl::space space = 
       isl::manage(isl_schedule_node_band_get_space(node.get()));
   isl::multi_val sizes = isl::multi_val::zero(space);
-
+  
   for(size_t i=0; i<space.dim(isl::dim::set); ++i)
     sizes = sizes.set_val(i, isl::val(ctx,tileSize));
   
   isl::schedule_node tiledNode =
     isl::manage(isl_schedule_node_band_tile(node.release(), sizes.release()));
+
+  return tiledNode;
+}
+ 
+ScheduleNodeBuilder tile(isl::schedule_node node, int tileSize) {
+  assert(isl_schedule_node_get_type(node.get()) == isl_schedule_node_band &&
+         "expect band node");
+  
+  isl::schedule_node tiledNode = tileNode(node, tileSize);
+  isl::ctx ctx = tiledNode.get_ctx();
 
   // markers.
   std::string marker = "1st level tiling - tiles";
@@ -121,6 +130,20 @@ ScheduleNodeBuilder tile(isl::schedule_node node, int tileSize) {
   //clang-format on
 }
 
+ScheduleNodeBuilder tileAndUnroll(isl::schedule_node node, int tileSize) {
+  assert(isl_schedule_node_get_type(node.get()) == isl_schedule_node_band &&
+         "expect band node");
+ 
+  isl::schedule_node tiledNode = tileNode(node, tileSize);
+  isl::ctx ctx = tiledNode.get_ctx();
+  isl::union_set astOptions = isl::union_set(ctx, "{unroll[x]}");
+  
+  //clang-format off
+  return
+    band(tiledNode.band_get_partial_schedule(),
+      band(tiledNode.child(0).band_get_partial_schedule(), astOptions));
+  //clang-format on 
+}
 
 } // end namespace builders
 
