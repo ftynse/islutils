@@ -628,8 +628,9 @@ std::tuple<bool, ScheduleNodeMatcher, int, int> checkSecondCondition(TestContext
   return std::make_tuple(false, anyTree(), 0, 0);
 }
 
-bool checkThirdCondition(TestContext* ctx, isl_schedule_node* node)
+static std::vector<isl_space*> checkThirdCondition(TestContext* ctx, isl_schedule_node* node)
 {
+  std::vector<isl_space*> result;
   printf("INSIDE THIRD CONDITION\n");
   // determine current schedule
   printf("DUMP CURRENT LEAF\n");
@@ -640,13 +641,13 @@ bool checkThirdCondition(TestContext* ctx, isl_schedule_node* node)
   isl_union_map* reads = isl_union_map_copy(ctx->s_->reads.get());
   reads = isl_union_map_curry(reads);
   reads = isl_union_map_apply_domain(reads, isl_union_map_copy(schedule));
-  isl::union_map cpp_reads = isl::manage(reads);
+  isl::union_map cpp_reads = isl::manage(isl_union_map_copy(reads));
 
   // get writes
   isl_union_map* writes = isl_union_map_copy(ctx->s_->mustWrites.get());
   writes = isl_union_map_curry(writes);
   writes = isl_union_map_apply_domain(writes, isl_union_map_copy(schedule));
-  isl::union_map cpp_writes = isl::manage(writes);
+  isl::union_map cpp_writes = isl::manage(isl_union_map_copy(writes));
 
   // dump information
   printf("DUMP READS FOR EXACT NODE\n");
@@ -665,12 +666,16 @@ bool checkThirdCondition(TestContext* ctx, isl_schedule_node* node)
     for (auto m : matches) {
       m[stridePlaceholderCollection.at(i)].candidateMapSpace_.dump();
       isl::space currCppSpace = m[stridePlaceholderCollection.at(i)].candidateMapSpace_;
-      generateCopyScheduleFromSpace(ctx, 1, isl_space_unwrap(isl_space_range(currCppSpace.get())));
+      isl_space* curr_space = currCppSpace.get();
+      curr_space = isl_space_range(curr_space);
+      curr_space = isl_space_unwrap(curr_space);
+      result.push_back(curr_space);
+      //generateCopyScheduleFromSpace(ctx, 1, isl_space_unwrap(isl_space_range(currCppSpace.get())));
     }
     i++;
   }
 
-  // check independently writes against all matchers
+  /* // check independently writes against all matchers
   i = 0;
   for (auto am : accessMatchers) {
     auto matches = match(cpp_writes, am);
@@ -678,11 +683,12 @@ bool checkThirdCondition(TestContext* ctx, isl_schedule_node* node)
     for (auto m : matches) {
       m[stridePlaceholderCollection.at(i)].candidateMapSpace_.dump();
       isl::space currCppSpace = m[stridePlaceholderCollection.at(i)].candidateMapSpace_;
+      result.push_back(isl_space_unwrap(isl_space_range(currCppSpace.get())));
       generateCopyScheduleFromSpace(ctx, 1, isl_space_unwrap(isl_space_range(currCppSpace.get())));
     }
     i++;
-    }
-  return false;
+    }*/
+  return result;
 }
 
 /* 
@@ -704,6 +710,144 @@ static isl_schedule_node* reachLeaf(isl_schedule_node* node)
 
   return leaf;
 
+}
+
+static isl::schedule_node createFirstTypeBuilder(TestContext* context, std::vector<isl_space*> spaceVector, isl_schedule_node* node)
+{
+  isl_union_set_list* listToTransfer = isl_union_set_list_alloc(context->ctx_, 0);
+  isl_union_set* readSet = isl_union_map_range(isl_union_map_copy(context->s_->reads.copy()));
+  isl_union_set* writeSet = isl_union_map_range(isl_union_map_copy(context->s_->mayWrites.copy()));
+  listToTransfer = isl_union_set_list_add(listToTransfer, readSet);
+  listToTransfer = isl_union_set_list_add(listToTransfer, writeSet);
+  isl_union_set* arraysToTransfer = isl_union_set_list_union(isl_union_set_list_copy(listToTransfer));
+  arraysToTransfer = isl_union_set_detect_equalities(arraysToTransfer);
+  
+  std::vector<std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>> forCopyForwardVector;
+  std::vector<std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>> forCopyBackwardVector;
+
+  /* we need to union all extensions in one extension node */ 
+  std::vector<isl_union_map*> extensionsArray;
+
+  int problem_size = spaceVector.size();
+  for (int i = 0; i < problem_size; i++) {
+    forCopyForwardVector.push_back(generateCopyScheduleFromSpace(context, 1, spaceVector.at(i)));
+    forCopyBackwardVector.push_back(generateCopyScheduleFromSpace(context, 0, spaceVector.at(i)));
+    extensionsArray.push_back(std::get<0>(forCopyForwardVector.at(i)));
+    extensionsArray.push_back(std::get<0>(forCopyBackwardVector.at(i)));
+  }
+
+  /* transfer from and to device */
+  isl_union_map* transferForward = createCopyNode(1, arraysToTransfer,isl_schedule_node_copy(node), context);
+  isl_union_map* transferBackward = createCopyNode(0, arraysToTransfer, isl_schedule_node_copy(node), context);
+  isl_union_set* transferForwardFilter = isl_union_map_range(isl_union_map_copy(transferForward));
+  isl_union_set* transferBackwardFilter = isl_union_map_range(isl_union_map_copy(transferBackward));
+  isl_union_map* unionTransfer = isl_union_map_union(transferForward, transferBackward);
+
+  /* union all extensions */ 
+  isl_union_map* unionCopy = extensionsArray.at(0);
+  for (int i = 1; i < problem_size; i++) {
+    unionCopy = isl_union_map_union(unionCopy, extensionsArray.at(i));
+  }
+  isl_union_map* unionExtension = isl_union_map_union(unionTransfer, unionCopy);
+
+  /* collect previous info about band node */
+  isl_schedule_node* previousFilterNode = isl_schedule_node_parent(isl_schedule_node_copy(node));
+  isl::schedule_node cppPreviousFilterNode = isl::manage(previousFilterNode);
+  isl_union_set* previousFilter = isl_schedule_node_filter_get_filter(isl_schedule_node_copy(previousFilterNode));
+
+  isl_schedule_node* previousBandNode = isl_schedule_node_child(isl_schedule_node_copy(node), 0);
+  isl_multi_union_pw_aff* previousBandNodeSchedule = isl_schedule_node_get_prefix_schedule_multi_union_pw_aff(previousBandNode);
+
+  /* union new filters with previous filter */
+  isl_union_set* unionFilter = isl_union_set_copy(previousFilter);
+  for (int i = 0; i < problem_size; i++) {
+    unionFilter = isl_union_set_union(unionFilter, isl_union_set_copy(std::get<1>(forCopyForwardVector.at(i))));
+    unionFilter = isl_union_set_union(unionFilter, isl_union_set_copy(std::get<1>(forCopyBackwardVector.at(i))));
+  }
+
+  //TODO
+  std::string kernelName("kernel()");
+  isl_id* id = isl_id_alloc(context->ctx_, kernelName.c_str(), nullptr);
+
+  /* add all annotations */
+  //annotateStatement("kernel(" + toString(i)+")", "reqd_work_group_size", 1, 1, 1);
+  for (int i = 0; i < problem_size; i++) {
+    annotateStatement(toString(isl_multi_union_pw_aff_to_str(std::get<2>(forCopyForwardVector.at(i)))), "xcl_pipeline_loop");
+    annotateStatement(toString(isl_multi_union_pw_aff_to_str(std::get<2>(forCopyBackwardVector.at(i)))), "xcl_pipeline_loop");
+  }
+  annotateStatement(toString(isl_multi_union_pw_aff_to_str(previousBandNodeSchedule)), "xcl_pipeline_loop");
+  annotateStatement(toString(isl_multi_union_pw_aff_to_str(previousBandNodeSchedule)), "xcl_pipeline_loop");
+
+  /*   create cpp objects */
+  isl::union_map cppUnionTransfer = isl::manage(isl_union_map_copy(unionTransfer));
+  isl::union_set cppTransferForwardFilter = isl::manage(isl_union_set_copy(transferForwardFilter));
+  isl::union_set cppPreviousFilter = isl::manage(isl_union_set_copy(previousFilter));
+  isl::union_map cppUnionCopy = isl::manage(isl_union_map_copy(unionCopy));
+
+  isl::union_set cppPreviousFilter2 = isl::manage(isl_union_set_copy(previousFilter));
+  isl::multi_union_pw_aff cppPreviousBandNodeSchedule = isl::manage(isl_multi_union_pw_aff_copy(previousBandNodeSchedule));
+
+  isl::union_set cppTransferBackwardFilter = isl::manage(isl_union_set_copy(transferBackwardFilter));
+
+  isl::union_map cppUnionExtension = isl::manage(isl_union_map_copy(unionExtension));
+  isl::union_set cppUnionFilter = isl::manage(isl_union_set_copy(unionFilter));
+  
+  isl::id cppId= isl::manage(id);
+
+  std::vector<isl::multi_union_pw_aff> cppCopyForwardScheduleVector;
+  std::vector<isl::multi_union_pw_aff> cppCopyBackwardScheduleVector;
+
+  std::vector<isl::union_set> cppCopyForwardSetVector;
+  std::vector<isl::union_set> cppCopyBackwardSetVector;
+
+  for (int i = 0; i < problem_size; i++) {
+    isl::union_set cppCopyForward1 = isl::manage(std::get<1>(forCopyForwardVector.at(i)));
+    isl::multi_union_pw_aff cppCopyForward2 = isl::manage(std::get<2>(forCopyForwardVector.at(i)));
+    isl::union_set cppCopyBackward1 = isl::manage(std::get<1>(forCopyBackwardVector.at(i)));
+    isl::multi_union_pw_aff cppCopyBackward2 = isl::manage(std::get<2>(forCopyBackwardVector.at(i)));
+    cppCopyForwardSetVector.push_back(cppCopyForward1);
+    cppCopyBackwardSetVector.push_back(cppCopyBackward1);
+    cppCopyForwardScheduleVector.push_back(cppCopyForward2);
+    cppCopyBackwardScheduleVector.push_back(cppCopyBackward2);
+  }
+
+
+  /* create vector of builders */
+  using namespace builders;
+
+  std::vector<ScheduleNodeBuilder> filterForwardVector;
+  std::vector<ScheduleNodeBuilder> filterBackwardVector;
+
+  for (int i = 0; i < problem_size; i++) {
+    auto builderForward = filter(cppCopyForwardSetVector.at(i), band(cppCopyForwardScheduleVector.at(i)));
+    auto builderBackward = filter(cppCopyBackwardSetVector.at(i), band(cppCopyBackwardScheduleVector.at(i)));
+    filterForwardVector.push_back(builderForward);
+    filterBackwardVector.push_back(builderBackward);
+  }
+  
+  auto builder = mark(cppId,
+		    extension(cppUnionExtension,
+		     sequence(
+		       filter(cppTransferForwardFilter),
+		       filter(cppUnionFilter,
+		       	 sequence(
+		           filterForwardVector,
+			   subtree(cppPreviousFilterNode),
+			   filterBackwardVector
+		         )
+		       ),
+		       filter(cppTransferBackwardFilter)
+		     )
+		   )
+		 );
+    
+    
+  isl_schedule_node* after_cut = isl_schedule_node_cut(node);
+  isl::schedule_node cpp_after_cut = isl::manage(after_cut);
+  cpp_after_cut = builder.insertAt(cpp_after_cut);
+
+  return cpp_after_cut;
+  
 }
 
 static isl_schedule_node* findAndReplaceDevice(TestContext* ctx, isl_schedule_node* node)
@@ -740,12 +884,25 @@ static isl_schedule_node* findAndReplaceDevice(TestContext* ctx, isl_schedule_no
   printf("DUMP LEAF POSITION\n");
   isl_schedule_node_dump(leaf);
   // check conditions (3)
-  bool thirdResult = checkThirdCondition(ctx, leaf);
-  printf("THIRD RESULT : %i\n", thirdResult);
-  // return to the previous node if
-  if (!thirdResult) {
+  std::vector<isl_space*> thirdResult = checkThirdCondition(ctx, leaf);
+  printf("DUMP RESULT VECTOR\n");
+  for (isl_space* sp : thirdResult) {
+    isl_space_dump(sp);
+    printf("\n");
+  }
+  if (thirdResult.size() != 0) {
+    isl::schedule_node new_node = createFirstTypeBuilder(ctx, thirdResult, isl_schedule_node_copy(node));
+    printf("DUMP RESULT NODE\n");
+    new_node.dump();
+    return new_node.release();
+  } else {
     return node;
   }
+  printf("THIRD RESULT : %i\n", thirdResult);
+  // return to the previous node if
+  //if (!thirdResult) {
+  //  return node;
+  //}
   return node;
 }
 
