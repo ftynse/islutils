@@ -1,6 +1,13 @@
 #ifndef TEST_EXTENSION_H
 #define TEST_EXTENSION_H
+#include "islutils/access.h"
+#include "islutils/access_patterns.h"
+#include "islutils/ctx.h"
+#include "islutils/parser.h"
+
 #include <islutils/scop.h>
+#include <islutils/builders.h>
+#include <islutils/matchers.h>
 #include "pet.h"
 #include <vector>
 #include <unordered_map>
@@ -14,7 +21,6 @@ public:
   std::string fileName_;
   isl_ctx* ctx_;
   int matched_nodes_;
-
   //std::unordered_multimap<std::string, std::string> annotationMap;
   
   TestContext(Scop* s, pet_scop* petScop, std::string fileName, isl_ctx* ctx)
@@ -75,5 +81,18 @@ class Statement {
 };
 
 std::unordered_multimap<std::string, std::string> annotationMap;
+
+using namespace matchers;
+// maybe in future there will more matchers when complex structures will be held
+std::vector<ScheduleNodeMatcher> matchers1d =
+  {band(anyTree())};
+std::vector<ScheduleNodeMatcher> matchers2d =
+  {band(band(anyTree()))};
+std::vector<ScheduleNodeMatcher> matchers3d =
+   {band(band(band(anyTree())))};
+std::vector<ScheduleNodeMatcher> matchersMored;
+
+std::vector<PlaceholderSet<StrideCandidate, StridePattern>> accessMatchers;
+std::vector<UnpositionedPlaceholder<StrideCandidate, StridePattern>> stridePlaceholderCollection;
 
 #endif TEST_EXTENSION_H
