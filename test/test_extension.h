@@ -85,11 +85,17 @@ std::unordered_multimap<std::string, std::string> annotationMap;
 using namespace matchers;
 // maybe in future there will more matchers when complex structures will be held
 std::vector<ScheduleNodeMatcher> matchers1d =
-  {band(anyTree())};
+  {band(
+     anyTree())};
 std::vector<ScheduleNodeMatcher> matchers2d =
-  {band(band(anyTree()))};
+  {band(
+     band(
+       anyTree()))};
 std::vector<ScheduleNodeMatcher> matchers3d =
-   {band(band(band(anyTree())))};
+   {band(
+      band(
+        band(
+	  anyTree())))};
 std::vector<ScheduleNodeMatcher> matchersMored;
 
 std::vector<PlaceholderSet<StrideCandidate, StridePattern>> accessMatchers;

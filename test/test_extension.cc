@@ -38,188 +38,6 @@ static void annotateStatement(std::string st, Args... args)
   annotationMap.insert({st, annotation});
 }
 
-bool checkFirstCondition(isl_schedule_node* node)
-{
-  printf("INSIDE FIRST CONDITION\n");
-  auto matcher = band(isKernel, anyTree());
-  
-  if (ScheduleNodeMatcher::isMatching(matcher, isl::manage_copy(node))) {
-    return true;
-  }
-  return false;
-}
-
-
-std::tuple<bool, ScheduleNodeMatcher, int, int> checkSecondCondition(TestContext* ctx, isl_schedule_node* node)
-{
-  printf("INSIDE SECOND CONDITION\n");
-  using namespace matchers;
-
-  ScheduleNodeMatcher dummy = anyTree();
-
-  int i = 0;
-  for (ScheduleNodeMatcher m : matchers1d) {
-    if (ScheduleNodeMatcher::isMatching(m, isl::manage_copy(node))) {
-      return std::make_tuple(true, m, 1, i);
-    }
-    i++;
-  }
-
-  i = 0;
-  for (ScheduleNodeMatcher m : matchers2d) {
-    if (ScheduleNodeMatcher::isMatching(m, isl::manage_copy(node))) {
-      return std::make_tuple(true, m, 2, i);
-    }
-    i++;
-  }
-
-  i = 0;
-  for (ScheduleNodeMatcher m : matchers3d) {
-    if (ScheduleNodeMatcher::isMatching(m, isl::manage_copy(node))) {
-      return std::make_tuple(true, m, 3, i);
-    }
-    i++;
-  }
-
-  // I am not sure yet what to do with 4d 
-
-  i = 0;
-  for (ScheduleNodeMatcher m : matchersMored) {
-    if (ScheduleNodeMatcher::isMatching(m, isl::manage_copy(node))) {
-      return std::make_tuple(false, m, 4, i);
-    }
-    i++;
-  }
-  return std::make_tuple(false, anyTree(), 0, 0);
-}
-
-bool checkThirdCondition(TestContext* ctx, isl_schedule_node* node)
-{
-  printf("INSIDE THIRD CONDITION\n");
-  // determine current schedule
-  printf("DUMP CURRENT LEAF\n");
-  isl_schedule_node_dump(node);
-  isl_union_map* schedule = isl_schedule_node_get_prefix_schedule_union_map(node);
-  printf("DUMP PREFIX SCHEDULE\n");
-  isl_union_map_dump(schedule);
-  printf("\n");
-
-  // get reads
-  isl_union_map* reads = isl_union_map_copy(ctx->s_->reads.get());
-  reads = isl_union_map_curry(reads);
-  reads = isl_union_map_apply_domain(reads, isl_union_map_copy(schedule));
-  isl::union_map cpp_reads = isl::manage(reads);
-  cpp_reads.dump();
-
-  // get writes
-  isl_union_map* writes = isl_union_map_copy(ctx->s_->mustWrites.get());
-  printf("DUMP WRITES 1\n");
-  isl_union_map_dump(writes);
-  writes = isl_union_map_curry(writes);
-  printf("DUMP WRITES 2\n");
-  isl_union_map_dump(writes);
-  writes = isl_union_map_apply_domain(writes, isl_union_map_copy(schedule));
-  printf("DUMP WRITES 3\n");
-  isl_union_map_dump(writes);
-  isl::union_map cpp_writes = isl::manage(writes);
-  cpp_writes.dump();
-
-  // dump information
-  printf("DUMP READS FOR EXACT NODE\n");
-  isl_union_map_dump(reads);
-  printf("\n");
-  printf("DUMP WRITES FOR EXACT NODE\n");
-  isl_union_map_dump(writes);
-  printf("\n");
-
-  
-  // check independently reads against all matchers
-  int i = 0;
-  for (auto am : accessMatchers) {
-    auto matches = match(cpp_reads, am);
-    printf("MATCHED SIZE FOR READS: %i\n", matches.size());
-    for (auto m : matches) {
-      m[stridePlaceholderCollection.at(i)].candidateMapSpace_.dump();
-    }
-    i++;
-  }
-
-  // check independently writes against all matchers
-  i = 0;
-  for (auto am : accessMatchers) {
-    auto matches = match(cpp_writes, am);
-    printf("MATCHED SIZE FOR WRITES: %i\n", matches.size());
-    for (auto m : matches) {
-      m[stridePlaceholderCollection.at(i)].candidateMapSpace_.dump();
-    }
-    i++;
-  }
-  return false;
-}
-
-/* 
- * The strategy here might be changed in future;
- * Initally pass root in the function 
- */
-
-static isl_schedule_node* reachLeaf(isl_schedule_node* node)
-{
-  printf("INSIDE REACH LEAF\n");
-  // here reach the first leaf
-  // maybe we need some checks about type of accesses
-  // trivial or not
-
-  isl_schedule_node* leaf = isl_schedule_node_copy(node);
-  while (isl_schedule_node_get_type(leaf) != isl_schedule_node_leaf) {
-    leaf = isl_schedule_node_child(leaf, 0);
-  }
-
-  return leaf;
-
-}
-
-static isl_schedule_node* findAndReplaceDevice(TestContext* ctx, isl_schedule_node* node)
-{
-  // check conditions (1)
-  printf("DUMP OUR CURRENT POSITION\n");
-  isl_schedule_node_dump(node);
-  bool firstResult = checkFirstCondition(node);
-  printf("FIRST RESULT : %i\n", firstResult);
-  // proceed to the next node if does not match 
-  // (perhaps not deeper than on two nodes)
-
-  if (!firstResult) {
-    size_t nChildren = static_cast<size_t>(isl_schedule_node_n_children(node));
-    for (size_t i = 0; i < nChildren; ++i) {
-      isl_schedule_node* child = isl_schedule_node_child(isl_schedule_node_copy(node), i);
-      node = isl_schedule_node_parent(findAndReplaceDevice(ctx, child));
-      return node;
-     }
-  }
-  
-  // check conditions (2)
-  auto secondResult = checkSecondCondition(ctx, node);
-  printf("SECOND RESULT : %i\n", std::get<0>(secondResult));
-  // return to the previous node if does not match
-  if (!std::get<0>(secondResult)) {
-    return node;
-  }
-  // third condition is connected with accesses,
-  // so go to leaf first,
-  // for now check only in one leaf (not sure what to do if there are many of them)
-  
-  isl_schedule_node* leaf = reachLeaf(node);
-  printf("DUMP LEAF POSITION\n");
-  isl_schedule_node_dump(leaf);
-  // check conditions (3)
-  bool thirdResult = checkThirdCondition(ctx, leaf);
-  printf("THIRD RESULT : %i\n", thirdResult);
-  // return to the previous node if
-  if (!thirdResult) {
-    return node;
-  }
-  return node;
-}
 /*
 static isl::schedule_node traverse_check(Scop* S, isl::schedule_node node)
 {
@@ -680,6 +498,257 @@ static void initializeAccess(TestContext* context)
   accessMatchers.push_back(allOf(access(dim(-2, ss))));
 }
 
+// unwrapped one binary relation
+
+static isl_union_map* getRangeDomainFromSpaceAccess(isl_space* space)
+{
+  space = isl_space_wrap(space);
+  space = isl_space_map_from_set(space);
+  isl_multi_pw_aff* mpa = isl_multi_pw_aff_identity(space);
+  isl_map* map = isl_map_from_multi_pw_aff(mpa);
+  isl_union_map* union_map = isl_union_map_from_map(map);
+  isl_union_set* union_set = isl_union_map_range(union_map);
+  union_map = isl_union_set_unwrap(union_set);
+  return union_map;
+}
+
+static  std::tuple<isl_union_map*, isl_union_set*, isl_multi_union_pw_aff*>
+generateCopyScheduleFromSpace(TestContext* context, bool forward, isl_space* inputSpace)
+{
+  // TODO add ability to copy as many arrays as possible
+  // or always match for exact number of arrays
+  //struct pet_array* pa = context->petScop_->arrays[array_num];
+  printf("INSIDE COPY FROM SPACE\n");
+  isl_multi_pw_aff *mpa;
+  isl_multi_union_pw_aff *mupa;
+
+  isl_space* space = isl_space_wrap(isl_space_copy(inputSpace));
+  space = isl_space_from_range(space);
+  space = isl_space_add_dims(space, isl_dim_in, 0);
+  space = isl_space_wrap(space);
+  space = isl_space_map_from_set(space);
+  isl_id* id = isl_id_alloc(context->ctx_, forward ? "read" : "write", nullptr);
+  space = isl_space_set_tuple_id(space, isl_dim_in, id);
+  space = isl_space_domain(space);
+
+  space = isl_space_map_from_set(space);
+  mpa = isl_multi_pw_aff_identity(space);
+  mpa = isl_multi_pw_aff_range_factor_range(mpa);
+  mpa = isl_multi_pw_aff_range_factor_range(mpa);
+  mupa = isl_multi_union_pw_aff_from_multi_pw_aff(mpa);
+
+  isl_union_map *access = isl_union_map_copy(context->s_->reads.get());
+
+  isl_union_set* range = isl_union_map_range(access);
+
+  isl_union_map* input_union_map = getRangeDomainFromSpaceAccess(isl_space_copy(inputSpace));
+
+  //isl_union_set_intersect(isl_union_set_copy(range));
+  isl_union_map* intersection = isl_union_map_intersect_range(isl_union_map_copy(input_union_map), isl_union_set_copy(range));
+
+  isl_union_set* wrapped_union_map = isl_union_map_wrap(intersection);
+  isl_union_map* map_from_wrapped_union_map = isl_union_map_from_range(wrapped_union_map);
+
+  isl_union_set* wrapped_map_from_wrapped_union_map = isl_union_map_wrap(map_from_wrapped_union_map);
+  isl_union_map* union_wrapped_map_from_set = isl_union_map_from_range(wrapped_map_from_wrapped_union_map);
+
+  isl_map* wrapped_map_from_set = isl_map_from_union_map(union_wrapped_map_from_set);
+  wrapped_map_from_set = isl_map_set_tuple_id(wrapped_map_from_set, isl_dim_out, id);
+
+  isl_union_map* final_map = isl_union_map_from_map(wrapped_map_from_set);
+
+  isl_union_set* filter = isl_union_map_range(isl_union_map_copy(final_map));
+  filter = isl_union_set_coalesce(filter);
+
+  isl_union_set* domain = isl_union_map_range(final_map);
+  access = isl_union_set_wrapped_domain_map(domain);
+  access = isl_union_map_reverse(access);
+  access = isl_union_map_coalesce(access);
+
+  printf("DUMP RESULT OF NODE CONSTRUCTION\n");
+  isl_union_map_dump(access);
+  isl_union_set_dump(filter);
+  isl_multi_union_pw_aff_dump(mupa);
+
+  return std::make_tuple(access, filter, mupa);
+}
+
+bool checkFirstCondition(isl_schedule_node* node)
+{
+  printf("INSIDE FIRST CONDITION\n");
+  auto matcher = band(isKernel, anyTree());
+  
+  if (ScheduleNodeMatcher::isMatching(matcher, isl::manage_copy(node))) {
+    return true;
+  }
+  return false;
+}
+
+
+std::tuple<bool, ScheduleNodeMatcher, int, int> checkSecondCondition(TestContext* ctx, isl_schedule_node* node)
+{
+  printf("INSIDE SECOND CONDITION\n");
+  using namespace matchers;
+
+  ScheduleNodeMatcher dummy = anyTree();
+
+  int i = 0;
+  for (ScheduleNodeMatcher m : matchers1d) {
+    if (ScheduleNodeMatcher::isMatching(m, isl::manage_copy(node))) {
+      return std::make_tuple(true, m, 1, i);
+    }
+    i++;
+  }
+
+  i = 0;
+  for (ScheduleNodeMatcher m : matchers2d) {
+    if (ScheduleNodeMatcher::isMatching(m, isl::manage_copy(node))) {
+      return std::make_tuple(true, m, 2, i);
+    }
+    i++;
+  }
+
+  i = 0;
+  for (ScheduleNodeMatcher m : matchers3d) {
+    if (ScheduleNodeMatcher::isMatching(m, isl::manage_copy(node))) {
+      return std::make_tuple(true, m, 3, i);
+    }
+    i++;
+  }
+
+  // I am not sure yet what to do with 4d 
+
+  i = 0;
+  for (ScheduleNodeMatcher m : matchersMored) {
+    if (ScheduleNodeMatcher::isMatching(m, isl::manage_copy(node))) {
+      return std::make_tuple(false, m, 4, i);
+    }
+    i++;
+  }
+  return std::make_tuple(false, anyTree(), 0, 0);
+}
+
+bool checkThirdCondition(TestContext* ctx, isl_schedule_node* node)
+{
+  printf("INSIDE THIRD CONDITION\n");
+  // determine current schedule
+  printf("DUMP CURRENT LEAF\n");
+  isl_schedule_node_dump(node);
+  isl_union_map* schedule = isl_schedule_node_get_prefix_schedule_union_map(node);
+
+  // get reads
+  isl_union_map* reads = isl_union_map_copy(ctx->s_->reads.get());
+  reads = isl_union_map_curry(reads);
+  reads = isl_union_map_apply_domain(reads, isl_union_map_copy(schedule));
+  isl::union_map cpp_reads = isl::manage(reads);
+
+  // get writes
+  isl_union_map* writes = isl_union_map_copy(ctx->s_->mustWrites.get());
+  writes = isl_union_map_curry(writes);
+  writes = isl_union_map_apply_domain(writes, isl_union_map_copy(schedule));
+  isl::union_map cpp_writes = isl::manage(writes);
+
+  // dump information
+  printf("DUMP READS FOR EXACT NODE\n");
+  isl_union_map_dump(reads);
+  printf("\n");
+  printf("DUMP WRITES FOR EXACT NODE\n");
+  isl_union_map_dump(writes);
+  printf("\n");
+
+  
+  // check independently reads against all matchers
+  int i = 0;
+  for (auto am : accessMatchers) {
+    auto matches = match(cpp_reads, am);
+    printf("MATCHED SIZE FOR READS: %i\n", matches.size());
+    for (auto m : matches) {
+      m[stridePlaceholderCollection.at(i)].candidateMapSpace_.dump();
+      isl::space currCppSpace = m[stridePlaceholderCollection.at(i)].candidateMapSpace_;
+      generateCopyScheduleFromSpace(ctx, 1, isl_space_unwrap(isl_space_range(currCppSpace.get())));
+    }
+    i++;
+  }
+
+  // check independently writes against all matchers
+  i = 0;
+  for (auto am : accessMatchers) {
+    auto matches = match(cpp_writes, am);
+    printf("MATCHED SIZE FOR WRITES: %i\n", matches.size());
+    for (auto m : matches) {
+      m[stridePlaceholderCollection.at(i)].candidateMapSpace_.dump();
+      isl::space currCppSpace = m[stridePlaceholderCollection.at(i)].candidateMapSpace_;
+      generateCopyScheduleFromSpace(ctx, 1, isl_space_unwrap(isl_space_range(currCppSpace.get())));
+    }
+    i++;
+    }
+  return false;
+}
+
+/* 
+ * The strategy here might be changed in future;
+ * Initally pass root in the function 
+ */
+
+static isl_schedule_node* reachLeaf(isl_schedule_node* node)
+{
+  printf("INSIDE REACH LEAF\n");
+  // here reach the first leaf
+  // maybe we need some checks about type of accesses
+  // trivial or not
+
+  isl_schedule_node* leaf = isl_schedule_node_copy(node);
+  while (isl_schedule_node_get_type(leaf) != isl_schedule_node_leaf) {
+    leaf = isl_schedule_node_child(leaf, 0);
+  }
+
+  return leaf;
+
+}
+
+static isl_schedule_node* findAndReplaceDevice(TestContext* ctx, isl_schedule_node* node)
+{
+  // check conditions (1)
+  printf("DUMP OUR CURRENT POSITION\n");
+  isl_schedule_node_dump(node);
+  bool firstResult = checkFirstCondition(node);
+  printf("FIRST RESULT : %i\n", firstResult);
+  // proceed to the next node if does not match 
+  // (perhaps not deeper than on two nodes)
+
+  if (!firstResult) {
+    size_t nChildren = static_cast<size_t>(isl_schedule_node_n_children(node));
+    for (size_t i = 0; i < nChildren; ++i) {
+      isl_schedule_node* child = isl_schedule_node_child(isl_schedule_node_copy(node), i);
+      node = isl_schedule_node_parent(findAndReplaceDevice(ctx, child));
+      return node;
+     }
+  }
+  
+  // check conditions (2)
+  auto secondResult = checkSecondCondition(ctx, node);
+  printf("SECOND RESULT : %i\n", std::get<0>(secondResult));
+  // return to the previous node if does not match
+  if (!std::get<0>(secondResult)) {
+    return node;
+  }
+  // third condition is connected with accesses,
+  // so go to leaf first,
+  // for now check only in one leaf (not sure what to do if there are many of them)
+  
+  isl_schedule_node* leaf = reachLeaf(node);
+  printf("DUMP LEAF POSITION\n");
+  isl_schedule_node_dump(leaf);
+  // check conditions (3)
+  bool thirdResult = checkThirdCondition(ctx, leaf);
+  printf("THIRD RESULT : %i\n", thirdResult);
+  // return to the previous node if
+  if (!thirdResult) {
+    return node;
+  }
+  return node;
+}
+
 void runAllFlow(std::string fileName, bool computeSchedule) {
 
   //implement function which parses matcher library 
@@ -738,17 +807,17 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
 
   /* temporal solution to track number of kernels */
   
-  //context->matched_nodes_ = 0;
-  //node = isl_schedule_node_map_descendant_bottom_up(node, differentiateSchedule,
-  //                                            (static_cast<void *>(context)));
-//isl_schedule_node_dump(node);
+  /*    context->matched_nodes_ = 0;
+   node = isl_schedule_node_map_descendant_bottom_up(node, differentiateSchedule,
+                                               (static_cast<void *>(context)));
+					       isl_schedule_node_dump(node);*/
 //dumpAnnotations();
   // we should remember to mark our extrension nodes to transfer to device wuith different ddr banks
 
-  //node = findAndReplaceDevice(context, node);
-  //printf("CHECK IF RETURNED NODE IS ROOT\n");
-  // isl_schedule_node_dump(node);
-  
+ node = findAndReplaceDevice(context, node);
+ printf("CHECK IF RETURNED NODE IS ROOT\n");
+ isl_schedule_node_dump(node);
+  /*  
   isl::schedule_node cpp_node = isl::manage(node);
 
   printf("DUMP CURRENT NODE\n");
@@ -785,7 +854,7 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
   printf("\n");
 
   auto ss =stride(context->ctx_, 1);
-  auto psStride = allOf(access(dim(-2, ss)));
+  auto psStride = allOf(access(dim(-1, ss)));
   //std::cout<<"placeholder id: "<<ss.id_<<std::endl;
   auto matches = match(writes, psStride);
   printf("DUMP MATCHES\n");
@@ -794,12 +863,27 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
   //}
 
   auto matchesWr = match(reads, psStride);
-  for (auto m: matchesWr) {
-    isl::space sp = m[ss].candidateMapSpace_;
-    isl_space* csp = sp.get();
-    isl_space_dump(isl_space_range(isl_space_unwrap(isl_space_range(csp))));
-  }
- 
+  
+  isl::space sp1 = matchesWr.at(0)[ss].candidateMapSpace_;
+  isl_space* csp1 = sp1.get();
+  isl_space* csp_range1 = isl_space_range(csp1);
+
+  isl_space_dump(csp_range1);
+
+  isl::space sp2 = matchesWr.at(1)[ss].candidateMapSpace_;
+  isl_space* csp2 = sp2.get();
+  isl_space* csp_range2 = isl_space_range(csp2);
+
+  isl_space_dump(csp_range2);
+  isl_space* mapSpace = isl_space_map_from_set(csp_range2);
+  isl_space_dump(mapSpace);
+  auto mpa = isl_multi_pw_aff_identity(mapSpace);
+  auto map1 = isl_map_from_multi_pw_aff(mpa);
+  auto map2 = isl_union_map_from_map(map1);
+  auto set1 = isl_union_map_range(map2);
+  isl_union_set_dump(set1);
+  //printf("equality: %i\n", isl_space_is_equal(csp_range1, csp_range2));
+  */
 }
 
 int main(int argc, char **argv) {
