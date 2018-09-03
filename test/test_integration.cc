@@ -336,7 +336,6 @@ TEST(Integration, 1mmF) {
     // clang-format on
   }();
 
-  // walk the entire tree, we expect three matches.
   int numberOfMatches =
     walkScheduleTree(matcher, scop.schedule);
 
