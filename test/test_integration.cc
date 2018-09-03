@@ -417,8 +417,6 @@ TEST(Integration, 1mmF) {
   simpleASTGen(scop,root);
 
   std::vector<isl::schedule_node> bandTarget(3);
-  std::vector<isl::schedule_node> filterTarget(2);
-  std::vector<isl::schedule_node> leafTarget(2);
 
   auto matcher = [&]() {
     using namespace matchers;
@@ -427,9 +425,9 @@ TEST(Integration, 1mmF) {
       band(bandTarget[0],
         band(bandTarget[1],
           sequence(
-            filter(filterTarget[0], leaf(leafTarget[0])),
-            filter(filterTarget[1],
-              band(bandTarget[2], leaf(leafTarget[1]))))));
+            filter(leaf()),
+            filter(
+              band(bandTarget[2], leaf())))));
     // clang-format on
   }();
 
