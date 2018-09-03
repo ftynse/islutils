@@ -401,6 +401,8 @@ static isl_schedule_node *differentiateSchedule(isl_schedule_node *Node,
   return Node;
 }
 
+/* HERE STARTS THE NECESSARY PART */
+
 static void dumpAnnotations() {
   printf("\n\n##ANNOTATIONS##\n\n");
   for (auto it = DeviceContext::annotationMap.cbegin();
@@ -831,14 +833,20 @@ static isl_schedule_node *findAndReplaceDevice(DeviceContext *ctx,
   // proceed to the next node if does not match
   // (perhaps not deeper than on two nodes)
 
+  //for a child it is tricky we should always traverse a child inside a new tree
+  isl_schedule_node* current_parent;
   if (!firstResult) {
     size_t nChildren = static_cast<size_t>(isl_schedule_node_n_children(node));
     for (size_t i = 0; i < nChildren; ++i) {
-      isl_schedule_node *child =
-          isl_schedule_node_child(isl_schedule_node_copy(node), i);
-      node = isl_schedule_node_parent(findAndReplaceDevice(ctx, child));
-      return node;
+      isl_schedule_node* child;
+      if (i == 0) {
+        child = isl_schedule_node_child(isl_schedule_node_copy(node), i);
+      } else {
+        child = isl_schedule_node_child(current_parent, i);
+      }
+      current_parent = isl_schedule_node_parent(findAndReplaceDevice(ctx, child));
     }
+    return current_parent;
   }
 
   // check conditions (2)
