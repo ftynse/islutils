@@ -1,6 +1,32 @@
 #ifndef ADDITIONAL_TRANSFORMATIONS_H
 #define ADDITIONAL_TRANSFORMATIONS_H
 
+
+static isl_schedule_node* standardMarker(isl_schedule_node* Node, void *User)
+{
+  Scop* S = static_cast<Scop*>(User);
+  using namespace matchers;
+  auto matcher = band(isKernel, anyTree());
+  // hard: replace on sequence(filter(band()), filter(mark(band(any()))), filter(band()))
+  // easy: replace on filter(mark(band(any())))
+  
+  if (ScheduleNodeMatcher::isMatching(matcher, isl::manage_copy(Node))) {
+    // replace with builder
+    // at first we need to generate a payload for every type of the builder
+    isl_id* id = isl_id_alloc(S->mustWrites.get_ctx().get(),
+			      strAnnotation("xcl_array_partition", 1).c_str(), nullptr);
+    isl::id cppId = isl::manage(id);
+    using namespace builders;
+    auto insertKernelMarker = mark(cppId);
+    auto cpp_node = isl::manage(Node);
+    auto new_node =  insertKernelMarker.insertAt(cpp_node);
+    isl_schedule_node_dump(new_node.get());
+    return new_node.release();
+  }
+  
+  return Node;
+}
+
 static isl_schedule_node* insertCopyBackForwardMarkNodes(isl_schedule_node* Node, void* User)
 {
   if (isl_schedule_node_get_type(Node) == isl_schedule_node_mark) {

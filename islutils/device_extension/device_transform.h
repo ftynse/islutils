@@ -1,5 +1,5 @@
-#ifndef TEST_EXTENSION_H
-#define TEST_EXTENSION_H
+#ifndef DEVICE_TRANSFORM_H
+#define DEVICE_TRANSFORM_H
 #include "islutils/access.h"
 #include "islutils/access_patterns.h"
 #include "islutils/ctx.h"
@@ -14,7 +14,7 @@
 #include <sstream>
 typedef std::string matchers_annotations;
 
-class TestContext {
+class DeviceContext {
 public:
   Scop* s_;
   pet_scop* petScop_;
@@ -23,10 +23,18 @@ public:
   int matched_nodes_;
   //std::unordered_multimap<std::string, std::string> annotationMap;
   
-  TestContext(Scop* s, pet_scop* petScop, std::string fileName, isl_ctx* ctx)
+  DeviceContext(Scop* s, pet_scop* petScop, std::string fileName, isl_ctx* ctx)
   :s_(s), petScop_(petScop), fileName_(fileName), ctx_(ctx) 
   {
   }
+  static std::unordered_multimap<std::string, std::string> annotationMap;
+  static std::vector<matchers::ScheduleNodeMatcher> matchers1d;
+  static std::vector<matchers::ScheduleNodeMatcher> matchers2d;
+  static std::vector<matchers::ScheduleNodeMatcher> matchers3d;
+  static std::vector<matchers::ScheduleNodeMatcher> matchersMored;
+  static std::vector<matchers::PlaceholderSet<matchers::StrideCandidate, matchers::StridePattern>> accessMatchers;
+
+  static std::vector<matchers::UnpositionedPlaceholder<matchers::StrideCandidate, matchers::StridePattern>> stridePlaceholderCollection;
 };
 
 enum statementType {
@@ -44,7 +52,7 @@ enum annotationType {
   reshape
 };
 
-std::string annotationNames[] = {"dataflow", "groupsize", "pipeline", "reshape", "partition", "reshape"};
+//std::string annotationNames[] = {"dataflow", "groupsize", "pipeline", "reshape", "partition", "reshape"};
 
 template <typename T>
 std::string toString(const T& value) {
@@ -80,25 +88,6 @@ class Statement {
   //no idea what it should be currently
 };
 
-std::unordered_multimap<std::string, std::string> annotationMap;
+void runAllFlow(std::string fileName, bool computeSchedule);
 
-using namespace matchers;
-// maybe in future there will more matchers when complex structures will be held
-std::vector<ScheduleNodeMatcher> matchers1d =
-  {band(
-     anyTree())};
-std::vector<ScheduleNodeMatcher> matchers2d =
-  {band(
-     band(
-       anyTree()))};
-std::vector<ScheduleNodeMatcher> matchers3d =
-   {band(
-      band(
-        band(
-	  anyTree())))};
-std::vector<ScheduleNodeMatcher> matchersMored;
-
-std::vector<PlaceholderSet<StrideCandidate, StridePattern>> accessMatchers;
-std::vector<UnpositionedPlaceholder<StrideCandidate, StridePattern>> stridePlaceholderCollection;
-
-#endif TEST_EXTENSION_H
+#endif //DEVICE_TRANSFORM_H
