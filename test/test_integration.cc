@@ -120,28 +120,79 @@ class TileNode: private Tile{
 
     TileNode(int x) : tileSize(x) {}
 
-    //virtual isl::schedule_node operator() (isl::schedule_node bandOne, isl::schedule_node bandTwo);
     virtual isl::schedule_node operator() (isl::schedule_node band);
 
   private:
     int tileSize;
     isl::schedule_node insertPointMarker(isl::schedule_node);
     isl::schedule_node insertTileMarker(isl::schedule_node);
-    //bool areConsecutiveBand(isl::schedule_node, isl::schedule_node);
+    void numberConsecutiveBand(isl::schedule_node, int&);
+    isl::schedule_node tileConsecutiveBand(isl::schedule_node, int, int);
 };
 
-/*
-bool TileNode::areConsecutiveBand(isl::schedule_node bandOne, isl::schedule_node bandTwo) {
-  isl::schedule_node tmp;
-  tmp = bandOne.child(0);
-  if(tmp.is_equal(bandTwo))
-    return true;
-  tmp = bandTwo.child(0);
-  if(tmp.is_equal(bandOne))
-    return true;
-  return false;
+isl::schedule_node TileNode::tileConsecutiveBand(isl::schedule_node band,
+						 int tileSize,
+                                                 int numberOfBands) {
+  assert(isl_schedule_node_get_type(band.get()) == isl_schedule_node_band);
+  std::vector<isl::schedule_node> involvedBands;
+
+  for(int i = 0; i < numberOfBands; ++i) {
+    auto space = isl::manage(isl_schedule_node_band_get_space(band.get()));
+    auto dims = space.dim(isl::dim::set);
+    assert(dims == 1);
+    band = tileNode(band, tileSize);
+    involvedBands.push_back(band);
+    band = band.child(0);
+    band = band.child(0);
+  }
+
+  isl::schedule_node capture;
+  // use the matcher to capture the entire sub-tree
+  // before re-building.
+
+  //clang-format off
+  matchers::ScheduleNodeMatcher matcher =   
+    matchers::anyTree(capture);
+  //clang-format on
+
+  bool res =
+    ScheduleNodeMatcher::isMatching(matcher, band);
+  assert(res && "should match");
+
+  // move back "band" to original position.
+  for(int i = 0; i < numberOfBands*2; ++i) {
+    band = band.parent();
+  }
+
+  // TODO: here for now we assume just 2 consecutive
+  // band nodes. We need to estend to multiple consecutive
+  // band nodes.
+  //clang-format on
+  builders::ScheduleNodeBuilder builder = 
+    builders::band(involvedBands[0].band_get_partial_schedule(),
+      builders::band(involvedBands[1].band_get_partial_schedule(),
+        builders::band(involvedBands[0].child(0).band_get_partial_schedule(),
+	  builders::band(involvedBands[1].child(0).band_get_partial_schedule(),
+	    builders::subtree(capture)))));
+  //clang-format off
+
+  band = band.cut();
+  band = builder.insertAt(band);
+
+  return band;
 }
-*/
+
+void TileNode::numberConsecutiveBand(isl::schedule_node band, int& n) {
+  if(!band.has_children())
+    return;
+  if(band.n_children() > 1)
+    return;
+  band = band.child(0);
+  if(!isl_schedule_node_get_type(band.get()) ==
+	isl_schedule_node_band)
+    return; 
+  return numberConsecutiveBand(band, ++n);
+}
 
 isl::schedule_node TileNode::insertPointMarker(isl::schedule_node band) {
   isl::ctx ctx = band.get_ctx();
@@ -168,21 +219,18 @@ isl::schedule_node TileNode::operator() (isl::schedule_node band) {
   assert(isl_schedule_node_get_type(band.get()) == isl_schedule_node_band &&
         "expect band node");
 
-  band = tileNode(band, tileSize);
+  // check if the band dominates some consecutive bands,
+  // if this is the case we tile also the dominated bands.
+  int numberBand = 1;
+  numberConsecutiveBand(band, numberBand);
+  if(numberBand != 1) {
+    band = tileConsecutiveBand(band, tileSize, numberBand);
+  }
+  else {  
+    band = tileNode(band, tileSize);
+  }
   return band.child(0);
 }
-
-/*
-isl::schedule_node TileNode::operator() (isl::schedule_node bandOne, isl::schedule_node bandTwo) {
-  
-  assert(isl_schedule_node_get_type(bandOne.get()) == isl_schedule_node_band &&
-         "expect band node");
-  assert(isl_schedule_node_get_type(bandTwo.get()) == isl_schedule_node_band &&
-         "expect band node");
-  assert(areConsecutiveBand(bandOne, bandTwo) && "expect consecutive");
-  assert(0 && "STOPPED");
-}
-*/
 
 /*
 ScheduleNodeBuilder tileAndUnroll(isl::schedule_node node, int tileSize) {
@@ -217,7 +265,6 @@ static bool isSameBand(isl::schedule_node node, isl::schedule_node target) {
 }
 
 // DFS search.
-// TODO: change this to return isl::schedule_node
 static isl::schedule_node dfsFirst(isl::schedule_node node, 
 					isl::schedule_node target) {
 
@@ -239,34 +286,12 @@ static isl::schedule_node dfsFirst(isl::schedule_node node,
 }
 
 template <typename Func>
-static isl::schedule_node transform(isl::schedule_node root, Func tile, int n, ...) {
-
-  std::vector<isl::schedule_node> capturedNodes;
-  std::vector<isl::schedule_node> targetNodes;
-  va_list args;
-  va_start(args,n);
-
-  for(int i=0; i<n; ++i) {
-    capturedNodes.push_back(va_arg(args, isl::schedule_node));
-  }
-  va_end(args);
-
-  for(size_t i=0; i<capturedNodes.size(); ++i) {
-    isl::schedule_node tmp = dfsFirst(root, capturedNodes[i]);
-    assert(!tmp.is_null() && "not found");
-    targetNodes.push_back(tmp);
-  }
- 
-  // TODO. quick fix. change it.
-  if(targetNodes.size() == 1) {
-    targetNodes[0] = tile(targetNodes[0]);
-  }
-
-  //if(capturedNodes.size() == 2) {
-  //  targetNodes[0] = tile(targetNodes[0], targetNodes[1]);
-  //}
-   
-  return targetNodes[0].root();
+static isl::schedule_node transform(isl::schedule_node root, Func tile,
+				    isl::schedule_node band) {
+  isl::schedule_node target = dfsFirst(root, band); 
+  assert(!target.is_null() && "band node not found");
+  target = tile(target);
+  return target.root();
 }
 
 } // end namespace builders
@@ -338,18 +363,18 @@ TEST(Integration, 1mmF) {
 
   // Ideas for transformation:
   // 1. completely change a give subtree (i.e. matmul) in one shot.
-  // Cons: in the paper we claim to provide a composable set
-  // of transformations, but this is not a case.
-  // 2. the user can specify for each node the type of transformations
-  // he/she wants (i.e. transform(targetNode, tile))
-  // Cons: only the captured node are available for a transformation. 
+  // 2. we can apply to each captured node a given transformation.
+
+  // NOTE: if a band node X is followed by another band node Y
+  // and we tile X also Y will be tiled.
+  // For example, tile(band[0]) will tile also band[1]
+  // while tile(band[1]) will tile *only* band[1] 
  
   // create a copy for root.
   isl::schedule_node rootCopy1 = root;
   TileNode tileNode = TileNode(32); 
-  rootCopy1 = transform(rootCopy1, tileNode, 1, bandTarget[2]);
-  rootCopy1 = transform(rootCopy1, tileNode, 1, bandTarget[1]);
-  rootCopy1 = transform(rootCopy1, tileNode, 1, bandTarget[0]);
+  rootCopy1 = transform(rootCopy1, tileNode, bandTarget[2]);
+  rootCopy1 = transform(rootCopy1, tileNode, bandTarget[0]);
   // code gen not opt.
   simpleASTGen(scop,rootCopy1);
 
