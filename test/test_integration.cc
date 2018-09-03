@@ -4,7 +4,7 @@
 #include "islutils/builders.h"
 #include "islutils/ctx.h"
 #include "islutils/parser.h"
-
+#include <cstdarg>
 #include "gtest/gtest.h"
 
 using util::ScopedCtx;
@@ -89,41 +89,13 @@ static int walkScheduleTree(const ScheduleNodeMatcher &matcher,
 
 namespace builders{
 
-class TileNode{
+class Tile{
 
   public:
-
-    TileNode() : tileSize(32) {}
-
-    TileNode(int x) : tileSize(x) {}
-
-    virtual isl::schedule_node operator() (isl::schedule_node node) {
-      assert(isl_schedule_node_get_type(node.get()) == isl_schedule_node_band &&
-      "expect band node");
-
-      isl::ctx ctx = node.get_ctx();
-      // markers.
-      std::string marker = "tiling - tiles";
-      isl::id markerTile =
-        isl::id::alloc(ctx, marker, nullptr);
-      marker = "tiling - points";
-      isl::id markerPoints =
-        isl::id::alloc(ctx, marker, nullptr);
-      
-      node = node.insert_mark(markerTile);
-      node = node.child(0);
-      node = tileNode(node, tileSize);
-      node = node.child(0);
-      node = node.insert_mark(markerPoints);
-      return node.child(0);
-    }
-
-  private:
-    int tileSize;
-    isl::schedule_node tileNode(isl::schedule_node node, int tileSize);
+    static isl::schedule_node tileNode(isl::schedule_node node, int tileSize);
 };
 
-isl::schedule_node TileNode::tileNode(isl::schedule_node node, int tileSize) {
+isl::schedule_node Tile::tileNode(isl::schedule_node node, int tileSize) {
   assert(isl_schedule_node_get_type(node.get()) == isl_schedule_node_band &&
          "expect band node");
   isl::ctx ctx = node.get_ctx();
@@ -139,6 +111,78 @@ isl::schedule_node TileNode::tileNode(isl::schedule_node node, int tileSize) {
 
   return tiledNode;
 }
+
+class TileNode: private Tile{
+
+  public:
+
+    TileNode() : tileSize(32) {}
+
+    TileNode(int x) : tileSize(x) {}
+
+    //virtual isl::schedule_node operator() (isl::schedule_node bandOne, isl::schedule_node bandTwo);
+    virtual isl::schedule_node operator() (isl::schedule_node band);
+
+  private:
+    int tileSize;
+    isl::schedule_node insertPointMarker(isl::schedule_node);
+    isl::schedule_node insertTileMarker(isl::schedule_node);
+    //bool areConsecutiveBand(isl::schedule_node, isl::schedule_node);
+};
+
+/*
+bool TileNode::areConsecutiveBand(isl::schedule_node bandOne, isl::schedule_node bandTwo) {
+  isl::schedule_node tmp;
+  tmp = bandOne.child(0);
+  if(tmp.is_equal(bandTwo))
+    return true;
+  tmp = bandTwo.child(0);
+  if(tmp.is_equal(bandOne))
+    return true;
+  return false;
+}
+*/
+
+isl::schedule_node TileNode::insertPointMarker(isl::schedule_node band) {
+  isl::ctx ctx = band.get_ctx();
+  std::string marker = "tiling -tiles";
+  isl::id markerTile =
+    isl::id::alloc(ctx, marker, nullptr);
+  band.insert_mark(markerTile);
+  band = band.child(0);
+  return band;
+}
+
+isl::schedule_node TileNode::insertTileMarker(isl::schedule_node band) {
+  isl::ctx ctx = band.get_ctx();
+  std::string marker = "tiling -points";
+  isl::id markerPoint =
+    isl::id::alloc(ctx, marker, nullptr);
+  band.insert_mark(markerPoint);
+  band = band.child(0);
+  return band;
+}
+
+isl::schedule_node TileNode::operator() (isl::schedule_node band) {
+
+  assert(isl_schedule_node_get_type(band.get()) == isl_schedule_node_band &&
+        "expect band node");
+
+  band = tileNode(band, tileSize);
+  return band.child(0);
+}
+
+/*
+isl::schedule_node TileNode::operator() (isl::schedule_node bandOne, isl::schedule_node bandTwo) {
+  
+  assert(isl_schedule_node_get_type(bandOne.get()) == isl_schedule_node_band &&
+         "expect band node");
+  assert(isl_schedule_node_get_type(bandTwo.get()) == isl_schedule_node_band &&
+         "expect band node");
+  assert(areConsecutiveBand(bandOne, bandTwo) && "expect consecutive");
+  assert(0 && "STOPPED");
+}
+*/
 
 /*
 ScheduleNodeBuilder tileAndUnroll(isl::schedule_node node, int tileSize) {
@@ -174,38 +218,55 @@ static bool isSameBand(isl::schedule_node node, isl::schedule_node target) {
 
 // DFS search.
 // TODO: change this to return isl::schedule_node
-static std::vector<isl::schedule_node> dfsFirst(isl::schedule_node node, 
+static isl::schedule_node dfsFirst(isl::schedule_node node, 
 					isl::schedule_node target) {
 
   if(isSameBand(node, target)) {
-    return {node};
+    return node;
   }
 
+  isl::schedule_node res;
   for(int i = 0, e = node.n_children(); i < e; ++i) {
     node = node.child(i);
-    auto res = dfsFirst(node, target);
-    if(!res.empty()) {
+    res = dfsFirst(node, target);
+    if(!res.is_null()) {
       return res;
     }
     node = node.parent();
   }
 
-  return{};
+  return nullptr;
 }
 
 template <typename Func>
-static isl::schedule_node transform(isl::schedule_node root,
- 				    isl::schedule_node target,
-                                    Func tile) {
+static isl::schedule_node transform(isl::schedule_node root, Func tile, int n, ...) {
 
-  assert(isl_schedule_node_get_type(target.get()) != isl_schedule_node_domain &&
-         "target domain not allowed");
+  std::vector<isl::schedule_node> capturedNodes;
+  std::vector<isl::schedule_node> targetNodes;
+  va_list args;
+  va_start(args,n);
 
-  auto nodeTarget = dfsFirst(root, target);
-  assert(nodeTarget.size() == 1 && "expect single match");
+  for(int i=0; i<n; ++i) {
+    capturedNodes.push_back(va_arg(args, isl::schedule_node));
+  }
+  va_end(args);
 
-  nodeTarget[0] = tile(nodeTarget[0]);
-  return nodeTarget[0].root();
+  for(size_t i=0; i<capturedNodes.size(); ++i) {
+    isl::schedule_node tmp = dfsFirst(root, capturedNodes[i]);
+    assert(!tmp.is_null() && "not found");
+    targetNodes.push_back(tmp);
+  }
+ 
+  // TODO. quick fix. change it.
+  if(targetNodes.size() == 1) {
+    targetNodes[0] = tile(targetNodes[0]);
+  }
+
+  //if(capturedNodes.size() == 2) {
+  //  targetNodes[0] = tile(targetNodes[0], targetNodes[1]);
+  //}
+   
+  return targetNodes[0].root();
 }
 
 } // end namespace builders
@@ -276,20 +337,25 @@ TEST(Integration, 1mmF) {
   EXPECT_EQ(match(reads, allOf(access(dim(1, stride(ctx,1))))).size(), 1);
 
   // Ideas for transformation:
-  // 1. completely change a give subtree (i.e. matmul)
+  // 1. completely change a give subtree (i.e. matmul) in one shot.
   // Cons: in the paper we claim to provide a composable set
   // of transformations, but this is not a case.
   // 2. the user can specify for each node the type of transformations
   // he/she wants (i.e. transform(targetNode, tile))
-  // Cons: the user may loose track of the transformation applied. 
+  // Cons: only the captured node are available for a transformation. 
  
-  TileNode applyTiling = TileNode(32); 
-  root = transform(root, bandTarget[2], applyTiling);
-  //std::cout << root.to_str() << std::endl;
-  root = transform(root, bandTarget[1], applyTiling);
-  //std::cout << root.to_str() << std::endl;
-  root = transform(root, bandTarget[0], applyTiling);
-  //std::cout << root.to_str() << std::endl;
+  // create a copy for root.
+  isl::schedule_node rootCopy1 = root;
+  TileNode tileNode = TileNode(32); 
+  rootCopy1 = transform(rootCopy1, tileNode, 1, bandTarget[2]);
+  rootCopy1 = transform(rootCopy1, tileNode, 1, bandTarget[1]);
+  rootCopy1 = transform(rootCopy1, tileNode, 1, bandTarget[0]);
+  // code gen not opt.
+  simpleASTGen(scop,rootCopy1);
+
+  // create a copy for root.
+  //isl::schedule_node rootCopy2 = root;
+  //rootCopy2 = transform(rootCopy2, tileNode, 2, bandTarget[0], bandTarget[1]);
   
 }
 
