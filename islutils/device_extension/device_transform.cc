@@ -907,6 +907,7 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
   isl_options_set_schedule_maximize_band_depth(S.mustWrites.get_ctx().get(), 1);
   isl_options_set_schedule_maximize_coincidence(S.mustWrites.get_ctx().get(),
                                                 1);
+  isl_options_set_schedule_serialize_sccs(S.mustWrites.get_ctx().get(), 0);
   isl_options_set_schedule_outer_coincidence(S.mustWrites.get_ctx().get(), 1);
 
   /* initialize access matchers */
@@ -927,6 +928,7 @@ void runAllFlow(std::string fileName, bool computeSchedule) {
   new_schedule = isl_schedule_constraints_compute_schedule(sc);
 
   isl_schedule_node *node = isl_schedule_get_root(new_schedule);
+  isl_schedule_node_dump(node);
 
   /* temporal solution to track number of kernels */
 

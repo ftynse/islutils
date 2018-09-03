@@ -27,6 +27,7 @@ public:
   isl::union_map liveIn;
   isl::union_map depFlow;
   isl::union_map depFalse;
+  isl_union_pw_multi_aff *tagger;
   /// \}
 
   inline void dump();
