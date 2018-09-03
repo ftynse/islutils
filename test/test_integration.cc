@@ -236,7 +236,67 @@ class Vectorize: private Tile{
 
   public:
     
-    Vectorize() : 
+    Vectorize() : dimension(0), vectorWidth(8) {}
+  
+    Vectorize(int d, int v) : dimension(d), vectorWidth(v) {}
+
+    virtual isl::schedule_node operator() (isl::schedule_node band);
+
+  private:
+
+    int dimension;
+    int vectorWidth;
+};
+
+isl::schedule_node Vectorize::operator() (isl::schedule_node band) {
+  assert(isl_schedule_node_get_type(band.get()) == isl_schedule_node_band &&
+         "expect band node");
+  isl::space space = isl::manage(isl_schedule_node_band_get_space(band.get()));
+  int dims = space.dim(isl::dim::set);
+  assert(dimension < dims && "out-of-bound in dims");
+
+  // tile
+  band = tileNode(band, vectorWidth);
+
+  // move to the next node
+  band = band.child(0);
+  band = band.child(0);
+
+  //capture subtree
+  isl::schedule_node capture;
+  matchers::ScheduleNodeMatcher matcher =
+    matchers::anyTree(capture);
+  bool res =
+    ScheduleNodeMatcher::isMatching(matcher, band);
+  assert(res && "should match");
+
+  // move back "band" node to point tile
+  band = band.parent();
+
+  // ast options
+  // make sure is not unrolled
+  isl::ctx ctx = band.get_ctx();
+  isl::union_set astOptions = isl::union_set(ctx, "{ unroll[x]: 1 = 0 }");
+
+  //move back band node
+  band = band.parent();
+
+  // make builder
+  //clang-format off 
+  builders::ScheduleNodeBuilder builder =
+    builders::band(band.band_get_partial_schedule(),
+      builders::band(band.child(0).band_get_partial_schedule(), astOptions,
+        builders::subtree(capture)));
+  //clang-format on
+
+  band = band.cut();
+  band = builder.insertAt(band);
+
+  // sink as innermost loop
+  band = isl::manage(isl_schedule_node_band_sink(band.child(0).release()));
+
+  return band.child(0);
+} 
 
 class TileAndUnroll: private Tile{
 
@@ -421,8 +481,9 @@ TEST(Integration, 1mmF) {
 
   //create a copy for root;
   isl::schedule_node rootCopy3 = root;
-   
-  
+  Vectorize vectorize = Vectorize(0, 8);
+  rootCopy3 = transform(rootCopy3, vectorize, bandTarget[0]); 
+  simpleASTGen(scop, rootCopy3);  
 }
 
 int main(int argc, char **argv) {
