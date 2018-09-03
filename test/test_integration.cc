@@ -165,7 +165,7 @@ isl::schedule_node TileNode::tileConsecutiveBand(isl::schedule_node band,
   }
 
   // TODO: here for now we assume just 2 consecutive
-  // band nodes. We need to estend to multiple consecutive
+  // band nodes. We need to extend the builder to multiple consecutive
   // band nodes.
   //clang-format on
   builders::ScheduleNodeBuilder builder = 
