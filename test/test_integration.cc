@@ -232,28 +232,59 @@ isl::schedule_node TileNode::operator() (isl::schedule_node band) {
   return band.child(0);
 }
 
-/*
-ScheduleNodeBuilder tileAndUnroll(isl::schedule_node node, int tileSize) {
-  std::cout << "tile and unroll\n"; 
-  assert(isl_schedule_node_get_type(node.get()) == isl_schedule_node_band &&
+class TileAndUnroll: private Tile{
+
+  public:
+
+    TileAndUnroll() : tileSize(32) {}
+
+    TileAndUnroll(int x) : tileSize(x) {}
+
+    virtual isl::schedule_node operator() (isl::schedule_node band);
+
+  private:
+  
+    int tileSize;
+};
+
+isl::schedule_node TileAndUnroll::operator() (isl::schedule_node band) {
+  assert(isl_schedule_node_get_type(band.get()) == isl_schedule_node_band &&
          "expect band node");
- 
-  isl::schedule_node tiledNode = tileNode(node, tileSize);
-  isl::ctx ctx = tiledNode.get_ctx();
+
+  band = tileNode(band, tileSize);
+  // move to the next node.
+  band = band.child(0);
+  band = band.child(0);
+
+  // capture subtree
+  isl::schedule_node capture;
+  matchers::ScheduleNodeMatcher matcher =
+    matchers::anyTree(capture);
+  bool res =
+    ScheduleNodeMatcher::isMatching(matcher, band);
+  assert(res && "should match");
+  
+  // move back "band" node
+  band = band.parent();
+  band = band.parent();
+
+  // ast opt.
+  isl::ctx ctx = band.get_ctx();
   isl::union_set astOptions = isl::union_set(ctx, "{unroll[x]}");
   
-  //clang-format off
-  return
-    band(tiledNode.band_get_partial_schedule(),
-      band(tiledNode.child(0).band_get_partial_schedule(), astOptions));
-  //clang-format on 
+  // make builder
+  //clang-format off 
+  builders::ScheduleNodeBuilder builder =
+    builders::band(band.band_get_partial_schedule(),
+      builders::band(band.child(0).band_get_partial_schedule(), astOptions,
+        builders::subtree(capture)));
+  //clang-format on
+    
+  band = band.cut();
+  band = builder.insertAt(band);
+   
+  return band.child(0);
 }
-
-static isl::schedule_node transform(isl::schedule_node t,
-           std::function<ScheduleNodeBuilder(isl::schedule_node,int)>) {
-  return t;
-}
-*/
 
 // check if two band nodes are the same. 
 static bool isSameBand(isl::schedule_node node, isl::schedule_node target) {
@@ -378,8 +409,10 @@ TEST(Integration, 1mmF) {
   simpleASTGen(scop,rootCopy1);
 
   // create a copy for root.
-  //isl::schedule_node rootCopy2 = root;
-  //rootCopy2 = transform(rootCopy2, tileNode, 2, bandTarget[0], bandTarget[1]);
+  TileAndUnroll tileAndUnroll = TileAndUnroll(32);
+  isl::schedule_node rootCopy2 = root;
+  rootCopy2 = transform(rootCopy2, tileAndUnroll, bandTarget[2]);
+  simpleASTGen(scop, rootCopy2);
   
 }
 
