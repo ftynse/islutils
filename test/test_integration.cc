@@ -232,6 +232,12 @@ isl::schedule_node TileNode::operator() (isl::schedule_node band) {
   return band.child(0);
 }
 
+class Vectorize: private Tile{
+
+  public:
+    
+    Vectorize() : 
+
 class TileAndUnroll: private Tile{
 
   public:
@@ -405,7 +411,6 @@ TEST(Integration, 1mmF) {
   TileNode tileNode = TileNode(32); 
   rootCopy1 = transform(rootCopy1, tileNode, bandTarget[2]);
   rootCopy1 = transform(rootCopy1, tileNode, bandTarget[0]);
-  // code gen not opt.
   simpleASTGen(scop,rootCopy1);
 
   // create a copy for root.
@@ -413,6 +418,10 @@ TEST(Integration, 1mmF) {
   isl::schedule_node rootCopy2 = root;
   rootCopy2 = transform(rootCopy2, tileAndUnroll, bandTarget[2]);
   simpleASTGen(scop, rootCopy2);
+
+  //create a copy for root;
+  isl::schedule_node rootCopy3 = root;
+   
   
 }
 
