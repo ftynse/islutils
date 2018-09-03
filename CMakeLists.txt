@@ -73,7 +73,7 @@ set(pet_INCLUDE "external/install-pet/include")
 link_directories(islutils ${isl_LIBPATH} ${pet_LIBPATH})
 
 add_library(islutils
-
+            islutils/device_extension/device_transform.cc
             islutils/matchers.cc
             islutils/parser.cc
             islutils/builders.cc
