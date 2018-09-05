@@ -56,6 +56,16 @@ static void simpleASTGen(Scop scop, isl::schedule_node root) {
 
 }
 
+static void walkScheduleTreeAndPrint(isl::schedule_node node) {
+  isl_schedule_node_foreach_descendant_top_down(
+  node.get(),
+  [](__isl_keep isl_schedule_node *nodePtr, void *user) -> isl_bool {
+    isl::schedule_node node = isl::manage_copy(nodePtr);
+    std::cout << node.to_str() << "\n";
+    return isl_bool_true;
+  }, nullptr);
+}
+
 static int walkScheduleTree(const ScheduleNodeMatcher &matcher,
                                 isl::schedule schedule) {
   using namespace matchers;
@@ -393,10 +403,101 @@ static isl::schedule_node transform(isl::schedule_node root, Func tile,
 
 } // end namespace builders
 
+isl::schedule_node optimizeMatMult(isl::schedule_node root,
+				   isl::union_map reads,
+				   isl::union_map writes) {
+
+  assert(root && "root node non valid");
+  return root;
+}
+
 ////////////////////////////////////
 /// tests
 ////////////////////////////////////
 
+TEST(Integration, 1mmFF) {
+  using namespace matchers;
+  using namespace builders;
+
+  auto ctx = ScopedCtx();
+  auto scop = Parser("inputs/1mmF.c").getScop();
+  ASSERT_FALSE(scop.schedule.is_null());
+
+  scop.schedule =
+    scop.schedule.intersect_domain(scop.nonKillDomain);
+  auto root = scop.schedule.get_root();
+
+  // accesses
+  isl::union_map reads = scop.reads.curry();
+  isl::union_map writes = scop.mustWrites.curry();
+
+  std::vector<isl::schedule_node> bandTarget(3);
+  std::vector<isl::schedule_node> filterTarget(2);
+
+  auto matcher = [&]() {
+    using namespace matchers;
+    // clang-format off
+    return
+      band(bandTarget[0],
+        band(bandTarget[1],
+          sequence(
+            filter(filterTarget[0], leaf()),
+            filter(filterTarget[1],
+              band(bandTarget[2], leaf())))));
+    // clang-format on
+  }();
+
+  ASSERT_TRUE(
+    matchers::ScheduleNodeMatcher::isMatching(matcher, root.child(0)));
+
+  // simple interchange.
+  isl::schedule_node newRoot1 = root;
+  auto builder = [&]() {
+    using namespace builders;
+    // clang-format off
+    return
+      band(bandTarget[1].band_get_partial_schedule(),
+        band(bandTarget[0].band_get_partial_schedule(),
+          sequence(
+            filter(filterTarget[0].filter_get_filter()),
+            filter(filterTarget[1].filter_get_filter(),
+	      band(bandTarget[2].band_get_partial_schedule())))));
+    // clang-format on
+  }();
+
+  newRoot1 = newRoot1.child(0);
+  newRoot1 = newRoot1.cut();
+  newRoot1 = builder.insertAt(newRoot1);
+  newRoot1 = newRoot1.parent();
+  simpleASTGen(scop, newRoot1);
+
+  std::cout << filterTarget[0].filter_get_filter().to_str() << std::endl;
+  std::cout << filterTarget[1].filter_get_filter().to_str() << std::endl;
+  auto f = filterTarget[0].filter_get_filter();
+  f = f.unite(filterTarget[1].filter_get_filter());
+  std::cout << f.to_str() << std::endl;
+
+  isl::schedule_node newRoot2 = root;
+  auto builderS = [&]() {
+    using namespace builders;
+    //clang-format off
+    return 
+      band(bandTarget[0].band_get_partial_schedule(),
+        band(bandTarget[2].band_get_partial_schedule(),
+          band(bandTarget[1].band_get_partial_schedule(),
+            filter(f))));
+    //clang-format on
+  }();
+
+  newRoot2 = newRoot2.child(0);
+  newRoot2 = newRoot2.cut();
+  newRoot2 = builderS.insertAt(newRoot2);
+  newRoot2 = newRoot2.parent();
+  simpleASTGen(scop, newRoot2);
+
+}
+
+/*
 TEST(Integration, 1mmF) {
   using namespace matchers;
   using namespace builders;
@@ -458,6 +559,7 @@ TEST(Integration, 1mmF) {
   // Ideas for transformation:
   // 1. completely change a give subtree (i.e. matmul) in one shot.
   // 2. we can apply to each captured node a given transformation.
+  // 3. find and replace (each matcher -> 1:n transformers)
 
   // NOTE: if a band node X is followed by another band node Y
   // and we tile X also Y will be tiled.
@@ -483,6 +585,7 @@ TEST(Integration, 1mmF) {
   rootCopy3 = transform(rootCopy3, vectorize, bandTarget[0]); 
   simpleASTGen(scop, rootCopy3);  
 }
+*/
 
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
