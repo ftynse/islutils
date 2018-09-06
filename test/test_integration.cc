@@ -372,6 +372,7 @@ static bool isSameBand(isl::schedule_node node, isl::schedule_node target) {
 }
 
 // DFS search.
+// looks for "target" in the subtree dominated by "node".
 static isl::schedule_node dfsFirst(isl::schedule_node node, 
 					isl::schedule_node target) {
 
@@ -392,17 +393,21 @@ static isl::schedule_node dfsFirst(isl::schedule_node node,
   return nullptr;
 }
 
+// transformation entry point. Given a root node, it finds
+// the band node and calls the transformation f on the band
+// node. It returns a new root.
 template <typename Func>
-static isl::schedule_node transform(isl::schedule_node root, Func tile,
+static isl::schedule_node transform(isl::schedule_node root, Func f,
 				    isl::schedule_node band) {
   isl::schedule_node target = dfsFirst(root, band); 
   assert(!target.is_null() && "band node not found");
-  target = tile(target);
+  target = f(target);
   return target.root();
 }
 
 } // end namespace builders
 
+/*
 isl::schedule_node optimizeMatMult(isl::schedule_node root,
 				   isl::union_map reads,
 				   isl::union_map writes) {
@@ -410,11 +415,14 @@ isl::schedule_node optimizeMatMult(isl::schedule_node root,
   assert(root && "root node non valid");
   return root;
 }
+*/
 
 ////////////////////////////////////
 /// tests
 ////////////////////////////////////
-
+/*
+// this example is just a working in progress.
+// not important.
 TEST(Integration, 1mmFF) {
   using namespace matchers;
   using namespace builders;
@@ -496,8 +504,8 @@ TEST(Integration, 1mmFF) {
   simpleASTGen(scop, newRoot2);
 
 }
+*/
 
-/*
 TEST(Integration, 1mmF) {
   using namespace matchers;
   using namespace builders;
@@ -559,6 +567,8 @@ TEST(Integration, 1mmF) {
   // Ideas for transformation:
   // 1. completely change a give subtree (i.e. matmul) in one shot.
   // 2. we can apply to each captured node a given transformation.
+  // this looks similar to CLAY and Chill without the disadvanatge
+  // to be bounded to a specific loop structure.
   // 3. find and replace (each matcher -> 1:n transformers)
 
   // NOTE: if a band node X is followed by another band node Y
@@ -585,7 +595,7 @@ TEST(Integration, 1mmF) {
   rootCopy3 = transform(rootCopy3, vectorize, bandTarget[0]); 
   simpleASTGen(scop, rootCopy3);  
 }
-*/
+
 
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);

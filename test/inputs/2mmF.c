@@ -2,6 +2,9 @@
 int tmp[1024][1024];
 int A[1024][1024];
 int B[1024][1024];
+int D[1024][1024];
+int C[1024][1024];
+int beta;
 int alpha;
 
 void kernel1mm()
@@ -15,6 +18,13 @@ void kernel1mm()
 	tmp[i][j] = 0;
 	for (int k = 0; k < 1024; ++k)
 	  tmp[i][j] += alpha * A[i][k] * B[k][j];
+      }
+  for (int i = 0; i < 1024; i++)
+    for (int j = 0; j < 1024; j++)
+      {
+        D[i][j] *= beta;
+	for(int k = 0; k < 1024; k++)
+          D[i][j] += tmp[i][k] * C[k][j];
       }
 #pragma endscop
 
