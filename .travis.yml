@@ -15,9 +15,14 @@ matrix:
       env:
         - MATRIX_EVAL="CC=gcc-7 && CXX=g++-7"
 
+git:
+  submodules: false
+
 before_install:
   - eval "${MATRIX_EVAL}"
 before_script:
+  - llvm-config --includedir
+  - ls `llvm-config --includedir`
   - git submodule update --init --recursive -- external/isl
   - git submodule update --init -- external/pet
   - mkdir -p build
