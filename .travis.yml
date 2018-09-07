@@ -10,14 +10,19 @@ matrix:
             - ubuntu-toolchain-r-test
           packages:
             - g++-7
+            - llvm-3.9-dev
+            - libclang-3.9-dev
       env:
         - MATRIX_EVAL="CC=gcc-7 && CXX=g++-7"
 
 before_install:
   - eval "${MATRIX_EVAL}"
-  - git submodule update --init --recursive
+before_script:
+  - git submodule update --init --recursive -- external/isl
+  - git submodule update --init -- external/pet
   - mkdir -p build
 script:
-  - (cd build; cmake ..; cd -)
-  - (cd build; make; cd -)
-  - (cd build; make check; cd -)
+  - (cd build; cmake ..)
+  - (cd build; make pet)
+  - (cd build; make)
+  - (cd build; make check)
