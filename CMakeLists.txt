@@ -6,6 +6,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "-Wall -pedantic -O0 -g")
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+
 ExternalProject_Add(isl
      PREFIX external/isl
      SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/isl
