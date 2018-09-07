@@ -13,7 +13,7 @@ matrix:
             - llvm-3.9-dev
             - libclang-3.9-dev
       env:
-        - MATRIX_EVAL="CC=gcc-7 && CXX=g++-7"
+        - MATRIX_EVAL="CC=gcc-7 && CXX=g++-7 && PATH=`llvm-config-3.9 --bindir`:$PATH"
 
 git:
   submodules: false
