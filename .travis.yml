@@ -6,11 +6,13 @@ matrix:
     - os: linux
       addons:
         apt:
+          sources:
+            - llvm-toolchain-trusty-5.0
           packages:
-            - llvm-3.9-dev
-            - libclang-3.9-dev
+            - llvm-5.0-dev
+            - libclang-5.0-dev
       env:
-        - MATRIX_EVAL="PATH=`llvm-config-3.9 --bindir`:$PATH"
+        - MATRIX_EVAL="PATH=`/usr/bin/llvm-config-5.0 --bindir`:$PATH"
 
 git:
   submodules: false
@@ -20,6 +22,8 @@ before_install:
 before_script:
   - llvm-config --includedir
   - ls `llvm-config --includedir`
+  - echo "$LD_LIBRARY_PATH"
+  - echo "$CPATH"
   - git submodule update --init --recursive -- external/isl
   - git submodule update --init -- external/pet
   - mkdir -p build
