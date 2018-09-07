@@ -1,0 +1,23 @@
+language: cpp
+sudo: required
+dist: trusty
+matrix:
+  include:
+    - os: linux
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+          packages:
+            - g++-7
+      env:
+        - MATRIX_EVAL="CC=gcc-7 && CXX=g++-7"
+
+before_install:
+  - eval "${MATRIX_EVAL}"
+  - git submodule update --init --recursive
+  - mkdir -p build
+script:
+  - (cd build; cmake ..; cd -)
+  - (cd build; make; cd -)
+  - (cd build; make check; cd -)
