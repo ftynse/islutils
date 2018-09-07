@@ -22,10 +22,10 @@ index ea0b4982..86830fb3 100644
 +#include <isl/mat.h>
 +#include <isl/fixed_box.h>
 diff --git a/cpp/cpp-checked.h.pre b/cpp/cpp-checked.h.pre
-index 43911e57..f157f4ed 100644
+index 5aeb79e4..203e74f3 100644
 --- a/cpp/cpp-checked.h.pre
 +++ b/cpp/cpp-checked.h.pre
-@@ -32,7 +32,7 @@ public:
+@@ -33,7 +33,7 @@ public:
    boolean()
        : val(isl_bool_error) {}
    ~boolean() {
@@ -34,7 +34,7 @@ index 43911e57..f157f4ed 100644
    }
  
    /* implicit */ boolean(bool val)
-@@ -42,8 +42,8 @@ public:
+@@ -43,8 +43,8 @@ public:
    bool is_false() const { checked = true; return val == isl_bool_false; }
    bool is_true() const { checked = true; return val == isl_bool_true; }
  
@@ -45,7 +45,7 @@ index 43911e57..f157f4ed 100644
      ISLPP_ASSERT(!is_error(), "IMPLEMENTATION ERROR: Unhandled error state");
      return is_true();
    }
-@@ -82,8 +82,8 @@ private:
+@@ -83,8 +83,8 @@ private:
  	isl_stat val;
  
  	friend stat manage(isl_stat val);
@@ -55,7 +55,7 @@ index 43911e57..f157f4ed 100644
  	static stat ok() {
  		return stat(isl_stat_ok);
  	}
-@@ -92,7 +92,7 @@ public:
+@@ -93,7 +93,7 @@ public:
  	}
  	stat() : val(isl_stat_error) {}
  	~stat() {
@@ -64,7 +64,7 @@ index 43911e57..f157f4ed 100644
  	}
  
  	isl_stat release() {
-@@ -110,10 +110,21 @@ public:
+@@ -111,10 +111,21 @@ public:
  	}
  };
  
@@ -87,10 +87,10 @@ index 43911e57..f157f4ed 100644
  }
  } // namespace isl
 diff --git a/cpp/cpp.h.pre b/cpp/cpp.h.pre
-index bf1fdf80..bfa3c507 100644
+index 1718f9f5..2fdf64f3 100644
 --- a/cpp/cpp.h.pre
 +++ b/cpp/cpp.h.pre
-@@ -240,4 +240,14 @@ public:
+@@ -242,4 +242,14 @@ public:
  	}
  };
  
@@ -188,7 +188,7 @@ index 9b411617..b1533979 100644
  isl_multi_union_pw_aff_from_union_pw_multi_aff(
  	__isl_take isl_union_pw_multi_aff *upma);
 diff --git a/include/isl/constraint.h b/include/isl/constraint.h
-index adb0d863..5cc5abef 100644
+index 2f70f579..7a98b089 100644
 --- a/include/isl/constraint.h
 +++ b/include/isl/constraint.h
 @@ -22,7 +22,7 @@
@@ -339,7 +339,7 @@ index ed3ee349..70f6164d 100644
  
  isl_ctx *isl_mat_get_ctx(__isl_keep isl_mat *mat);
 diff --git a/include/isl/point.h b/include/isl/point.h
-index 1dddc628..08431c60 100644
+index b2f09572..15079618 100644
 --- a/include/isl/point.h
 +++ b/include/isl/point.h
 @@ -15,6 +15,7 @@ typedef struct isl_point isl_point;
@@ -347,7 +347,7 @@ index 1dddc628..08431c60 100644
  __isl_give isl_space *isl_point_get_space(__isl_keep isl_point *pnt);
  
 +__isl_constructor
- __isl_give isl_point *isl_point_zero(__isl_take isl_space *dim);
+ __isl_give isl_point *isl_point_zero(__isl_take isl_space *space);
  __isl_give isl_point *isl_point_copy(__isl_keep isl_point *pnt);
  __isl_null isl_point *isl_point_free(__isl_take isl_point *pnt);
 diff --git a/include/isl/polynomial_type.h b/include/isl/polynomial_type.h
@@ -368,13 +368,13 @@ index a8fe3cdf..34344be2 100644
  
  struct __isl_export isl_pw_qpolynomial;
 diff --git a/include/isl/space.h b/include/isl/space.h
-index 40a333ea..6280d020 100644
+index 8757bd3f..061db530 100644
 --- a/include/isl/space.h
 +++ b/include/isl/space.h
 @@ -20,8 +20,10 @@ extern "C" {
  #endif
  
- isl_ctx *isl_space_get_ctx(__isl_keep isl_space *dim);
+ isl_ctx *isl_space_get_ctx(__isl_keep isl_space *space);
 +__isl_constructor
  __isl_give isl_space *isl_space_alloc(isl_ctx *ctx,
  			unsigned nparam, unsigned n_in, unsigned n_out);
@@ -396,10 +396,10 @@ index 6a181555..c3d245c1 100644
  
  enum isl_dim_type {
 diff --git a/include/isl/union_set.h b/include/isl/union_set.h
-index 0e6fc984..33bba859 100644
+index 10a4fc9f..abcdfef5 100644
 --- a/include/isl/union_set.h
 +++ b/include/isl/union_set.h
-@@ -127,6 +127,7 @@ isl_bool isl_union_set_contains(__isl_keep isl_union_set *uset,
+@@ -131,6 +131,7 @@ isl_bool isl_union_set_contains(__isl_keep isl_union_set *uset,
  	__isl_keep isl_space *space);
  __isl_give isl_set *isl_union_set_extract_set(__isl_keep isl_union_set *uset,
  	__isl_take isl_space *dim);
@@ -421,7 +421,7 @@ index 23c8f581..e41024cd 100644
  
  __isl_give isl_vec *isl_vec_alloc(isl_ctx *ctx, unsigned size);
 diff --git a/interface/cpp.cc b/interface/cpp.cc
-index a52e6fec..288cfb45 100644
+index c0448ab6..f2348116 100644
 --- a/interface/cpp.cc
 +++ b/interface/cpp.cc
 @@ -175,6 +175,8 @@ void cpp_generator::print_class(ostream &os, const isl_class &clazz)
@@ -481,17 +481,17 @@ index a52e6fec..288cfb45 100644
 +	print_dump_impl(os, clazz);
  	osprintf(os, "\n");
  	print_methods_impl(os, clazz);
- }
-@@ -563,6 +586,8 @@ void cpp_generator::print_public_constructors_impl(ostream &os,
- 	osprintf(os, "  ptr = obj.copy();\n");
+ 	print_stream_insertion(os, clazz);
+@@ -566,6 +589,8 @@ void cpp_generator::print_class_factory_impl(ostream &os,
  	print_check_ptr_end(os, "ptr");
+ 	osprintf(os, "  return %s(ptr);\n", cppname);
  	osprintf(os, "}\n");
 +	osprintf(os, "%s::%s(std::nullptr_t)\n    : ptr(nullptr) {}\n\n",
 +		cppname, cppname);
  }
  
- /* Print implementations of constructors for class "clazz" to "os".
-@@ -633,6 +658,9 @@ void cpp_generator::print_ptr_impl(ostream &os, const isl_class &clazz)
+ /* Print implementations of private constructors for class "clazz" to "os".
+@@ -674,6 +697,9 @@ void cpp_generator::print_ptr_impl(ostream &os, const isl_class &clazz)
  	osprintf(os, "bool %s::is_null() const {\n", cppname);
  	osprintf(os, "  return ptr == nullptr;\n");
  	osprintf(os, "}\n");
@@ -501,7 +501,7 @@ index a52e6fec..288cfb45 100644
  }
  
  /* Print the implementation of the get_ctx method.
-@@ -648,6 +676,37 @@ void cpp_generator::print_get_ctx_impl(ostream &os, const isl_class &clazz)
+@@ -689,6 +715,37 @@ void cpp_generator::print_get_ctx_impl(ostream &os, const isl_class &clazz)
  	osprintf(os, "}\n");
  }
  
@@ -539,7 +539,7 @@ index a52e6fec..288cfb45 100644
  /* Print definitions for methods of class "clazz" to "os".
   */
  void cpp_generator::print_methods_impl(ostream &os, const isl_class &clazz)
-@@ -710,7 +769,13 @@ void cpp_generator::print_method_param_use(ostream &os, ParmVarDecl *param,
+@@ -751,7 +808,13 @@ void cpp_generator::print_method_param_use(ostream &os, ParmVarDecl *param,
  	const char *name_str = name.c_str();
  	QualType type = param->getOriginalType();
  
@@ -554,7 +554,7 @@ index a52e6fec..288cfb45 100644
  		osprintf(os, "%s", name_str);
  		return;
  	}
-@@ -1392,6 +1457,12 @@ string cpp_generator::type2cpp(QualType type)
+@@ -1433,6 +1496,12 @@ string cpp_generator::type2cpp(QualType type)
  	if (is_isl_stat(type))
  		return checked ? "stat" : "void";
  
@@ -567,7 +567,7 @@ index a52e6fec..288cfb45 100644
  	if (type->isIntegerType())
  		return type.getAsString();
  
-@@ -1401,6 +1472,11 @@ string cpp_generator::type2cpp(QualType type)
+@@ -1442,6 +1511,11 @@ string cpp_generator::type2cpp(QualType type)
  	if (is_callback(type))
  		return generate_callback_type(type);
  
@@ -580,7 +580,7 @@ index a52e6fec..288cfb45 100644
  }
  
 diff --git a/interface/cpp.h b/interface/cpp.h
-index 0e97c715..f779b3e9 100644
+index 325c984e..6d1d7181 100644
 --- a/interface/cpp.h
 +++ b/interface/cpp.h
 @@ -43,9 +43,12 @@ private:
@@ -609,7 +609,7 @@ diff --git a/interface/extract_interface.cc b/interface/extract_interface.cc
 index 1267c370..e40c1554 100644
 --- a/interface/extract_interface.cc
 +++ b/interface/extract_interface.cc
-@@ -127,6 +127,113 @@ bool has_annotation(Decl *decl, const char *name)
+@@ -127,6 +127,114 @@ bool has_annotation(Decl *decl, const char *name)
   */
  static bool is_exported(Decl *decl)
  {
@@ -682,6 +682,7 @@ index 1267c370..e40c1554 100644
 +		N.find("isl_mat_left_hermite") == std::string::npos &&
 +		N.find("read_from_file") == std::string::npos &&
 +		N.find("every_descendant") == std::string::npos &&
++               N.find("every_set") == std::string::npos &&
 +		N.find("remove_map_if") == std::string::npos &&
 +		N.find("isl_vec_normalize") == std::string::npos &&
 +		N.find("every_map") == std::string::npos &&
