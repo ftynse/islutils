@@ -5,11 +5,14 @@ set(TEST_NAMES
     matcher
     builders
     transformer
-    access)
+    access
+    unit)
 
 set(TEST_INPUTS
     one-dimensional-init.c
     nested.c
+    1mm.c
+    strideTest.c
     stencil.c)
 
 add_custom_target(check COMMAND echo "Running all")

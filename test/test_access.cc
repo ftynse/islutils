@@ -2,6 +2,7 @@
 #include "islutils/access_patterns.h"
 #include "islutils/ctx.h"
 #include "islutils/parser.h"
+#include <iostream>
 
 #include "gtest/gtest.h"
 
@@ -304,6 +305,22 @@ TEST(AccessMatcher, Stencil) {
   auto psWrites = allOf(access(dim(0, _1)));
   EXPECT_EQ(match(reads, psReads).size(), 1);
   EXPECT_EQ(match(writes, psWrites).size(), 1);
+}
+
+TEST(AccessMatcher, StrideTest) {
+  using namespace matchers;
+
+  auto ctx = ScopedCtx();
+  auto scop = Parser("inputs/strideTest.c").getScop();
+  ASSERT_FALSE(scop.schedule.is_null());
+ 
+  auto node =
+    scop.schedule.get_root().child(0).child(0);
+  auto schedule = node.get_prefix_schedule_union_map();
+  auto reads = scop.reads.curry().apply_domain(schedule);
+  auto writes = scop.mustWrites.curry().apply_domain(schedule);
+
+  EXPECT_EQ(match(writes, allOf(access(dim(0, stride(ctx,2))))).size(), 1);
 }
 
 TEST(AccessMatcher, ThreeIdentical) {

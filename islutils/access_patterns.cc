@@ -58,23 +58,32 @@ isl::map SingleInputDim::transformMap(isl::map map,
 ///////////////////////////////
 
 static isl::map mapToNext(isl::space space) {
-  using map_maker::operator==;
-  int dim = space.dim(isl::dim::set);
 
-  auto result = isl::map::universe(space.map_from_set());
-  if (dim == 0) {
-    return result;
-  }
+  space = space.map_from_set();
+  isl::map map = isl::map::universe(space);
+  unsigned lastDimension = map.dim(isl::dim::in) - 1;
 
-  for (int i = 0; i < dim - 1; ++i) {
-    auto aff =
-        isl::aff::var_on_domain(isl::local_space(space), isl::dim::set, i);
-    result = result.intersect(aff == aff);
+  // Set all but the last dimension to be equal for the input and output
+  //
+  //   input[i0, i1, ..., iX] -> output[o0, o1, ..., oX]
+  //     : i0 = o0, i1 = o1, ..., i(X-1) = o(X-1)
+  for (unsigned i = 0; i < lastDimension; ++i)
+    map = map.equate(isl::dim::in, i, isl::dim::out, i);
+
+  // Set the last dimension of the input to be strict smaller than the
+  // last dimension of the output.
+  //
+  //   input[?,?,?,...,iX] -> output[?,?,?,...,oX] : iX < oX
+  map = map.order_lt(isl::dim::in, lastDimension, isl::dim::out, lastDimension);
+  return map;
+}
+
+static inline isl::set getZeroSet(isl::space space) {
+  isl::set zeroSet = isl::set::universe(space);
+  for (size_t i = 0; i < zeroSet.dim(isl::dim::set); ++i) {
+    zeroSet = zeroSet.fix_si(isl::dim::set, i, 0);
   }
-  auto aff =
-      isl::aff::var_on_domain(isl::local_space(space), isl::dim::set, dim - 1);
-  auto next = aff.add_constant_si(1);
-  return result.intersect(next == aff);
+  return zeroSet;
 }
 
 std::vector<StrideCandidate>
@@ -84,13 +93,19 @@ StrideCandidate::candidates(isl::map singleOutDimMap,
   auto delta =
       map.apply_domain(singleOutDimMap).apply_range(singleOutDimMap).deltas();
   // TODO: also match parametric strides
-  auto strideAff =
+
+  if (delta.is_equal(getZeroSet(delta.get_space()))) {
+    return {};
+  }
+  isl::aff strideAff =
       isl::aff(isl::local_space(delta.get_space()), pattern.stride);
-  auto varAff = isl::aff::var_on_domain(isl::local_space(delta.get_space()),
-                                        isl::dim::set, 0);
-  using set_maker::operator==;
-  if (delta.is_subset(strideAff == varAff))
+  isl::val strideX = isl::manage(isl_set_get_stride(delta.get(), 0));
+  isl::val stride = strideAff.get_constant_val();
+
+  if (strideX.eq(stride)) {
     return {StrideCandidate{}};
+  }
+
   return {};
 }
 
