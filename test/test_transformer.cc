@@ -280,6 +280,17 @@ replaceDFSPreorderOnce(isl::schedule_node node,
   return node;
 }
 
+isl::schedule_node
+replaceDFSPostorderOnce(isl::schedule_node node,
+                        const matchers::ScheduleNodeMatcher &pattern,
+                        const builders::ScheduleNodeBuilder &replacement) {
+  for (int i = 0; i < node.n_children(); ++i) {
+    node =
+        replaceDFSPostorderOnce(node.child(i), pattern, replacement).parent();
+  }
+  return replaceOnce(node, pattern, replacement);
+}
+
 isl::schedule_node mergeIfTilable(isl::schedule_node node,
                                   isl::union_map dependences) {
   isl::schedule_node parent, child, grandchild;
