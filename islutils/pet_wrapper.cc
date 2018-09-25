@@ -167,4 +167,8 @@ pet_stmt *Scop::stmt(isl::id id) const {
   return nullptr;
 }
 
+IslCopyRefWrapper<isl::schedule> Scop::schedule() {
+  return IslCopyRefWrapper<isl::schedule>(scop_->schedule);
+}
+
 } // namespace pet

@@ -2,6 +2,7 @@
 #define ISLUTILS_PET_WRAPPER_H
 
 #include <islutils/scop.h>
+#include <islutils/type_traits.h>
 
 #include <string>
 
@@ -11,6 +12,30 @@ class pet_stmt;
 namespace pet {
 
 isl::ctx allocCtx();
+
+template <typename T>
+/// A wrapper class around an isl C object, convertible (with copy) to the
+/// respective isl C++ type and assignable from such type.
+/// This class is inteded to provide access to isl C objects hidden inside
+/// other objects without exposing isl C API.
+class IslCopyRefWrapper {
+public:
+  IslCopyRefWrapper(isl_unwrap_t<T> &r) : ref(r) {}
+
+  const T &operator=(const T &rhs) {
+    // This will create a C++ wrapper, destroy it immediatly and thus call the
+    // appropriate cleaning function for ref.
+    isl::manage(ref);
+
+    ref = rhs.copy();
+    return rhs;
+  }
+
+  operator T() { return isl::manage_copy(ref); }
+
+private:
+  isl_unwrap_t<T> &ref;
+};
 
 class Scop {
 public:
@@ -34,6 +59,9 @@ public:
 
   /// Find a statement by its identifier.
   pet_stmt *stmt(isl::id id) const;
+  /// Return an assignable wrapper class that can be used to overwrite the
+  /// Scop's schedule.
+  IslCopyRefWrapper<isl::schedule> schedule();
 
 private:
   pet_scop *scop_;
